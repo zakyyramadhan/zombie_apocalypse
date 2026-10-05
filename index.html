@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0e11" />
+<meta name="description" content="Zombie Survival — text-based survival RPG with 3D visualization. Scavenge, fight, survive." />
+<link rel="manifest" href="manifest.webmanifest" />
+<title>Zombie Survival — Survivor Camp</title>
+<link rel="stylesheet" href="css/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <header id="hud">
+    <div id="hud-top">
+      <div id="hud-title">🧟 ZOMBIE SURVIVAL</div>
+      <div id="hud-time">DAY 1 — 08:00 · ☀️ Clear</div>
+    </div>
+    <div id="stats">
+      <div class="stat" title="Health"><span class="ico">❤️</span><div class="bar"><div id="bar-hp" class="fill hp"></div></div><span id="txt-hp" class="val">100</span></div>
+      <div class="stat" title="Sanity"><span class="ico">🧠</span><div class="bar"><div id="bar-san" class="fill san"></div></div><span id="txt-san" class="val">100</span></div>
+      <div class="stat" title="Stamina"><span class="ico">⚡</span><div class="bar"><div id="bar-sta" class="fill sta"></div></div><span id="txt-sta" class="val">100</span></div>
+      <div class="stat" title="Hunger"><span class="ico">🍖</span><div class="bar"><div id="bar-hun" class="fill hun"></div></div><span id="txt-hun" class="val">100</span></div>
+      <div class="stat" title="Thirst"><span class="ico">💧</span><div class="bar"><div id="bar-thi" class="fill thi"></div></div><span id="txt-thi" class="val">100</span></div>
+    </div>
+    <div id="hud-sub">
+      <span id="hud-money">💵 $50</span>
+      <span id="hud-noise">🔊 Noise 0</span>
+      <span id="hud-inv">🎒 0/12</span>
+      <span id="hud-loc">🌫️ Nowhere</span>
+      <span id="hud-base">🌫️ No camp</span>
+    </div>
+  </header>
+
+  <main id="main">
+    <section id="viewport-wrap">
+      <canvas id="scene"></canvas>
+      <div id="scene-badge">⛺ SETTLEMENT</div>
+      <div id="battle-hud" class="hidden">
+        <div id="foe-box"><div id="foe-name">???</div><div class="bbar"><div id="foe-hp"></div></div></div>
+        <div id="ally-box"><div id="ally-name">SURVIVOR</div><div id="ally-num"></div><div class="bbar"><div id="ally-hp"></div></div></div>
+        <div id="dmg-layer"></div>
+      </div>
+      <div id="scene-fallback" class="hidden">3D unavailable — text mode active.</div>
+    </section>
+
+    <section id="side">
+      <div id="log" aria-live="polite"></div>
+      <div id="actions"></div>
+    </section>
+  </main>
+
+  <footer id="foot">
+    <button id="btn-save" class="ghost">💾 Save</button>
+    <button id="btn-load" class="ghost">📂 Load</button>
+    <button id="btn-new" class="ghost">🆕 New</button>
+    <button id="btn-help" class="ghost">❓ Help</button>
+    <span id="foot-note">Static web build · APK-ready (Capacitor) · v1</span>
+  </footer>
+</div>
+
+<div id="modal" class="hidden"><div id="modal-card"><div id="modal-body"></div><div id="modal-actions"></div></div></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
