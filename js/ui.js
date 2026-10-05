@@ -717,14 +717,15 @@ function showInventory(back, quiet = false) {
     const isGear = !!gd;
     const b = document.createElement('button');
     b.className = 'inv-slot' + (usable || isGear ? ' usable' : '');
-    b.innerHTML = `<span class="slot-icon">${ITEM_ICON[id] || '📦'}</span><span class="slot-name">${it.name || id}</span><span class="slot-qty">×${qty}</span>`;
+    b.innerHTML = `<span class="slot-drop" title="Discard">🗑</span><span class="slot-icon">${ITEM_ICON[id] || '📦'}</span><span class="slot-name">${it.name || id}</span><span class="slot-qty">×${qty}</span>`;
     b.title = (it.name || id) + (it.desc ? ' — ' + it.desc : '');
-    b.onclick = () => {
+    b.onclick = (ev) => {
       try {
+        if (ev.target.classList.contains('slot-drop')) return confirmDrop(id); // 🗑 corner = discard
         if (usable) useItem(id);
         else if (isGear) equipFromBag(id);
         else log(`<span class="sys">${it.name || id}: ${it.desc || 'crafting material. Forge and NPCs want these.'}</span>`);
-      } catch (e) { console.error(e); }
+      } catch (err) { console.error(err); }
       updateHUD(); sync3D();
     };
     grid.appendChild(b);
@@ -742,6 +743,26 @@ function showInventory(back, quiet = false) {
   backBtn.textContent = '⬅ Back';
   backBtn.onclick = () => { try { (invBack || showSettlement)(); } catch (e) { console.error(e); } updateHUD(); sync3D(); };
   box.appendChild(backBtn);
+}
+// Discard, from the pack. Only thing in the bag is ever loose stock — gear
+// leaves the bag the moment it is worn (see equipFromBag), so there is nothing
+// to unequip here; the grid can only ever hold what you are not wearing.
+function confirmDrop(id) {
+  const p = P();
+  const qty = p.inv[id] || 0;
+  const name = itemName(id);
+  if (qty <= 0) return showInventory(invBack, true);
+  log(`<br><span class="title">🗑️ DISCARD — ${name}</span> <span class="sys">×${qty} in pack</span>`);
+  const finish = () => { updateHUD(); sync3D(); useSave && useSave(); showInventory(invBack, true); };
+  setActions([
+    { label: `🗑️ Drop 1× ${name}<br><small>leaves ${qty - 1}</small>`, danger: true, fn: () => {
+      removeItem(p, id, 1); log(`🗑️ Dropped <b>${name}</b> ×1.`, 'bad'); finish();
+    } },
+    { label: `🗑️ Drop ALL ${name} ×${qty}<br><small>leaves the pack empty of them</small>`, disabled: qty < 2, danger: true, fn: () => {
+      removeItem(p, id, qty); log(`🗑️ Dropped <b>${name}</b> ×${qty}.`, 'bad'); finish();
+    } },
+    { label: '⬅ Cancel', wide: true, fn: () => showInventory(invBack, true) },
+  ]);
 }
 function showCharacter(back) {
   const p = P();

@@ -58,7 +58,9 @@ body{margin:0;background:var(--bg);color:var(--txt);font-family:Consolas,Menlo,"
 .section-head{grid-column:1/-1;color:var(--dim);font-size:13px;letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--line);padding:10px 2px 4px;margin-top:2px;}
 .section-head:first-child{margin-top:0;padding-top:0;}
 .inv-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;grid-column:1/-1;}
-.inv-slot{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 4px;min-height:78px;font-family:inherit;color:var(--txt);cursor:pointer;font-size:12px;line-height:1.3;}
+.inv-slot{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 4px;min-height:78px;font-family:inherit;color:var(--txt);cursor:pointer;font-size:12px;line-height:1.3;}
+.slot-drop{position:absolute;top:2px;right:2px;font-size:11px;line-height:1;padding:4px 5px;border-radius:6px;opacity:.45;}
+.slot-drop:hover{opacity:1;background:#5a2a2a;}
 .inv-slot.usable{border-color:#3f6b41;}
 .slot-icon{font-size:24px;}
 .slot-name{color:var(--dim);}
