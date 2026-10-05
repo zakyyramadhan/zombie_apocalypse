@@ -715,13 +715,14 @@ function showInventory(back, quiet = false) {
     const it = ITEMS[id] || gd || {};
     const usable = it && ['heal', 'sanity', 'food', 'water'].includes(it.type);
     const isGear = !!gd;
+    const locked = !!(p.locked || {})[id];
     const b = document.createElement('button');
     b.className = 'inv-slot' + (usable || isGear ? ' usable' : '');
-    b.innerHTML = `<span class="slot-drop" title="Discard">🗑</span><span class="slot-icon">${ITEM_ICON[id] || '📦'}</span><span class="slot-name">${it.name || id}</span><span class="slot-qty">×${qty}</span>`;
+    b.innerHTML = `<span class="slot-drop${locked ? ' locked' : ''}" title="${locked ? 'Locked' : 'Discard'}">${locked ? '🔒' : '🗑'}</span><span class="slot-icon">${ITEM_ICON[id] || '📦'}</span><span class="slot-name">${it.name || id}</span><span class="slot-qty">×${qty}</span>`;
     b.title = (it.name || id) + (it.desc ? ' — ' + it.desc : '');
     b.onclick = (ev) => {
       try {
-        if (ev.target.classList.contains('slot-drop')) return confirmDrop(id); // 🗑 corner = discard
+        if (ev.target.classList.contains('slot-drop')) return itemMenu(id); // corner = discard / lock
         if (usable) useItem(id);
         else if (isGear) equipFromBag(id);
         else log(`<span class="sys">${it.name || id}: ${it.desc || 'crafting material. Forge and NPCs want these.'}</span>`);
@@ -744,22 +745,31 @@ function showInventory(back, quiet = false) {
   backBtn.onclick = () => { try { (invBack || showSettlement)(); } catch (e) { console.error(e); } updateHUD(); sync3D(); };
   box.appendChild(backBtn);
 }
-// Discard, from the pack. Only thing in the bag is ever loose stock — gear
-// leaves the bag the moment it is worn (see equipFromBag), so there is nothing
-// to unequip here; the grid can only ever hold what you are not wearing.
-function confirmDrop(id) {
+// The slot's corner: discard this stack, or lock it so it can never be tossed
+// by accident. Gear leaves the bag the moment it is worn (see equipFromBag), so
+// there is nothing to unequip here — the grid only holds what you're NOT wearing.
+function itemMenu(id) {
   const p = P();
+  p.locked ??= {};
   const qty = p.inv[id] || 0;
   const name = itemName(id);
   if (qty <= 0) return showInventory(invBack, true);
-  log(`<br><span class="title">🗑️ DISCARD — ${name}</span> <span class="sys">×${qty} in pack</span>`);
+  const locked = !!p.locked[id];
   const finish = () => { updateHUD(); sync3D(); useSave && useSave(); showInventory(invBack, true); };
+  log(`<br><span class="title">${locked ? '🔒 LOCKED' : '🗑️ DISCARD'} — ${name}</span> <span class="sys">×${qty} in pack${locked ? ' · unlock it to drop' : ''}</span>`);
   setActions([
-    { label: `🗑️ Drop 1× ${name}<br><small>leaves ${qty - 1}</small>`, danger: true, fn: () => {
+    { label: `🗑️ Drop 1× ${name}<br><small>${locked ? 'locked — unlock first' : `leaves ${qty - 1}`}</small>`, danger: true, disabled: locked, fn: () => {
       removeItem(p, id, 1); log(`🗑️ Dropped <b>${name}</b> ×1.`, 'bad'); finish();
     } },
-    { label: `🗑️ Drop ALL ${name} ×${qty}<br><small>leaves the pack empty of them</small>`, disabled: qty < 2, danger: true, fn: () => {
+    { label: `🗑️ Drop ALL ${name} ×${qty}<br><small>${locked ? 'locked — unlock first' : 'leaves the pack empty of them'}</small>`, danger: true, disabled: locked || qty < 2, fn: () => {
       removeItem(p, id, qty); log(`🗑️ Dropped <b>${name}</b> ×${qty}.`, 'bad'); finish();
+    } },
+    { label: locked
+        ? `🔓 Unlock ${name}<br><small>allow discarding again</small>`
+        : `🔒 Lock ${name}<br><small>keeps it safe from mis-taps</small>`, fn: () => {
+      if (locked) { delete p.locked[id]; log(`🔓 <b>${name}</b> unlocked.`, 'good'); }
+      else { p.locked[id] = true; log(`🔒 <b>${name}</b> locked — it can no longer be dropped.`, 'good'); }
+      finish();
     } },
     { label: '⬅ Cancel', wide: true, fn: () => showInventory(invBack, true) },
   ]);
@@ -1068,6 +1078,8 @@ function offerDrop(pending, done) {
   if (!entries.length) { log(`No room and nothing to drop — leaving the find.`); done(); return; }
   log(`<b>Pack full — found ${pending.map(itemName).join(', ')}.</b> Use a supply, drop something, or walk away:`);
   const usable = entries.filter(([id]) => ITEMS[id] && ['heal', 'sanity', 'food', 'water'].includes(ITEMS[id].type)).slice(0, 3);
+  // locked stacks are never offered up for tossing, even to make room
+  const droppable = entries.filter(([id]) => !(p.locked || {})[id]);
   setActions([
     ...usable.map(([id, qty]) => ({
       label: `Use ${ITEMS[id].name} ×${qty}<br><small>frees 1 slot</small>`,
@@ -1083,7 +1095,7 @@ function offerDrop(pending, done) {
         else offerDrop(pending, done);
       }
     })),
-    ...entries.slice(0, 5).map(([id, qty]) => ({
+    ...droppable.slice(0, 5).map(([id, qty]) => ({
       label: `Drop ${itemName(id)} ×${qty}`,
       fn: () => {
         removeItem(p, id, 1);

@@ -19,6 +19,7 @@ export function newPlayer() {
     weaponDura: WEAPONS.kitchen_knife.durability,
     tools: {}, toolId: 'none', // owned tools + equipped tool (gather bonus, never fights)
     owned: {},                // gear you actually own (found or forged), separate from what's equipped
+    locked: {},               // stacks the survivor refuses to drop by accident
     armorId: 'none', accessoryId: 'none',
     inv: { bandage: 1, canned_food: 2, water_bottle: 1, scrap: 2 },
     kills: 0, explored: 0, looted: 0, day: 1, minute: 8 * 60,

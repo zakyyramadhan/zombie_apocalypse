@@ -62,6 +62,7 @@ export function loadGame() {
     data.player.tools ??= {};
     data.player.toolId ??= 'none';
     data.player.owned ??= {}; // found/forged gear waits in the bag until equipped
+    data.player.locked ??= {}; // stacks protected from being dropped
     normalizeInv(data.player); // heal display-name keys, whatever their source
     if (data.player.base) {
       data.player.base.stash ??= {};
