@@ -397,14 +397,17 @@ function doSleep() {
   const lean = hasStruct(p, 'lean_to');
   const fire = hasStruct(p, 'campfire');
   const safe = hasStruct(p, 'palisade');
-  advanceTime(p, 8 * 60);
+  // Sleeping burns far less than walking: a roof cuts it further. Without this
+  // an 8h sleep cost 24 hunger / 29 thirst and gave back only 15 HP — you woke
+  // worse off than you lay down.
+  advanceTime(p, 8 * 60, lean ? 0.4 : 0.6);
   if (lean) {
     p.hp = p.maxHp; p.san = clamp(p.san + 8, 0, p.maxSan); p.sta = p.maxSta;
     log(`😴 You sleep under your own roof. <span class="good">Fully healed, Sanity +8, Stamina full.</span> ${fmtTime(p)}.`);
   } else {
-    p.hp = clamp(p.hp + 15, 0, p.maxHp); p.sta = p.maxSta;
+    p.hp = clamp(p.hp + 30, 0, p.maxHp); p.sta = p.maxSta;
     p.san = clamp(p.san + (fire ? 2 : -5), 0, p.maxSan);
-    log(`🌙 You sleep on cold ground. <span class="good">HP +15.</span> ${fire ? `<span class="san">The fire watches over you. 🧠 +2.</span>` : `<span class="san">Stones dig into your back. 🧠 −5.</span>`}`);
+    log(`🌙 You sleep on cold ground. <span class="good">HP +30.</span> ${fire ? `<span class="san">The fire watches over you. 🧠 +2.</span>` : `<span class="san">Stones dig into your back. 🧠 −5.</span>`}`);
   }
   // night raid — the price of no walls
   const raidC = safe ? 0.05 : (p.base ? 0.25 : 0.35);

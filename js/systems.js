@@ -121,11 +121,12 @@ export function fmtTime(p) {
   return `DAY ${p.day} — ${h}:${m}`;
 }
 export function isNight(p) { const h = (p.minute / 60) % 24; return h >= 20 || h < 6; }
-export function advanceTime(p, mins) {
+export function advanceTime(p, mins, drainMul = 1) {
   p.minute += mins;
   while (p.minute >= 24 * 60) { p.minute -= 24 * 60; p.day += 1; }
-  // hunger/thirst drain ~3 per hour
-  const drain = (mins / 60) * 3;
+  // hunger/thirst drain ~3 per hour. `drainMul` lets a caller say "this time is
+  // spent asleep" — you burn less lying still than you do walking (see doSleep).
+  const drain = (mins / 60) * 3 * drainMul;
   p.hunger = clamp(p.hunger - drain, 0, p.maxHunger);
   p.thirst = clamp(p.thirst - drain * 1.2 * (p.thirstSaver ? 0.75 : 1), 0, p.maxThirst);
   p.noise = clamp(p.noise - mins * 0.25, 0, 100);
@@ -215,12 +216,12 @@ export function rollLoot(tableId, danger = 0) {
   const s = clamp(danger, 0, 5);
   const out = [rng.pick(table)];
   // The further up the danger scale, the more comes out: a rising chance of a
-  // second item, and of real gear instead of another battery. At 0 (a calm
-  // room) this is exactly the old lean roll, so nothing easy got richer.
-  if (rng.chance(0.35 + s * 0.05)) out.push(rng.pick(table));
+  // second item, and of real gear instead of another battery. Base rates were
+  // raised because one search paying ~1.4 items read as punishing, not lean.
+  if (rng.chance(0.45 + s * 0.05)) out.push(rng.pick(table));
   // rare stays rare — and must not double up when the table already rolled one.
   // Locked / high-danger rooms trade some batteries for real gear (§27).
-  if (rng.chance(0.05 + s * 0.02)) {
+  if (rng.chance(0.07 + s * 0.02)) {
     const pick = s >= 2 && rng.chance(0.5) ? rng.pick(RARE_GEAR) : 'battery';
     if (!out.includes(pick)) out.push(pick);
   }
