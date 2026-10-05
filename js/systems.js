@@ -202,14 +202,26 @@ export function encounterRoll(p, loc, dangerMod = 0, weather = 'clear') {
   return 'loot';
 }
 
+// Danger reads as stars (§11). It is not just a label: it is the dial behind
+// both how hard a place fights back (encounterRoll) and how well it pays
+// (rollLoot) — see `stars` below and the callers in ui.js.
+export function stars(n) {
+  const k = clamp(Math.round(n || 0), 0, 5);
+  return '★'.repeat(k) + '☆'.repeat(5 - k);
+}
+
 export function rollLoot(tableId, danger = 0) {
   const table = LOOT_TABLES[tableId] || LOOT_TABLES.general;
+  const s = clamp(danger, 0, 5);
   const out = [rng.pick(table)];
-  if (rng.chance(0.35)) out.push(rng.pick(table));
+  // The further up the danger scale, the more comes out: a rising chance of a
+  // second item, and of real gear instead of another battery. At 0 (a calm
+  // room) this is exactly the old lean roll, so nothing easy got richer.
+  if (rng.chance(0.35 + s * 0.05)) out.push(rng.pick(table));
   // rare stays rare — and must not double up when the table already rolled one.
   // Locked / high-danger rooms trade some batteries for real gear (§27).
-  if (rng.chance(0.06)) {
-    const pick = danger >= 2 && rng.chance(0.5) ? rng.pick(RARE_GEAR) : 'battery';
+  if (rng.chance(0.05 + s * 0.02)) {
+    const pick = s >= 2 && rng.chance(0.5) ? rng.pick(RARE_GEAR) : 'battery';
     if (!out.includes(pick)) out.push(pick);
   }
   return out;

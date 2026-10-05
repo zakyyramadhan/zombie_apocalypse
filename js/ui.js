@@ -1,6 +1,6 @@
 // UI + game flow. Text is authoritative; Three.js is visualization.
 import { WEAPONS, TOOLS, ARMORS, ACCESSORIES, ITEMS, ITEM_ICON, ZOMBIES, LOCATIONS, LOOT_TABLES, FORGE_CRAFTS, FIELD_RECIPES, STASH_LEVELS, CHURCH_ACTIONS, NPCS, STRUCTURES, BUILD_ORDER, SITES, RES_ICON, ANIMALS, ANIMAL_POOL, SELL_PRICES } from './data.js';
-import { weaponOf, toolOf, tableIcons, invCount, invCap, stashCap, addItem, removeItem, normalizeInv, fmtTime, isNight, advanceTime, rollWeather, WEATHER_ICON, sanityTier, maybePanic, encounterRoll, rollLoot, playerAttack, bleedTick, zombieAttack, fleeChance, merchantStock, survivalScore, sellPrice, marketMood, marketLabel, gearDef, gearSlot, ownsGear, grantGear, equipGear, clamp, hasStruct, baseLevel, canAfford, payCost, costText, newBase } from './systems.js';
+import { weaponOf, toolOf, tableIcons, invCount, invCap, stashCap, addItem, removeItem, normalizeInv, fmtTime, isNight, advanceTime, rollWeather, WEATHER_ICON, sanityTier, maybePanic, encounterRoll, rollLoot, stars, playerAttack, bleedTick, zombieAttack, fleeChance, merchantStock, survivalScore, sellPrice, marketMood, marketLabel, gearDef, gearSlot, ownsGear, grantGear, equipGear, clamp, hasStruct, baseLevel, canAfford, payCost, costText, newBase } from './systems.js';
 import { ZScene } from './three-scene.js';
 
 let S = null;          // { player, weather, merchantDay, world }
@@ -778,7 +778,7 @@ function showMap() {
       };
     }
     return {
-      label: `${loc.icon} ${loc.name}<br><small>${areaIcons(loc)} · Distance ${loc.distance}${horde}</small>`,
+      label: `${loc.icon} ${loc.name}<br><small>${stars(loc.danger)} <span class="sys">${loc.danger}/5 — harder, richer</span> · ${areaIcons(loc)} · Distance ${loc.distance}${horde}</small>`,
       fn: () => travelTo(loc.id)
     };
   });
@@ -798,7 +798,7 @@ function travelTo(locId) {
   S.world.depleted[locId] = (S.world.depleted[locId] || 0) + 1;
   S.world.cooldown[locId] = p.day; // no spamming the same area until tomorrow
   ZScene.buildLocation(locId); ZScene.badge(`${loc.icon} ${loc.name.toUpperCase()}`);
-  log(`<br><span class="title">${loc.icon} ${loc.name.toUpperCase()}</span><br>${loc.desc}<br><span class="sys">${fmtTime(p)} · ${WEATHER_ICON[S.weather]}${isNight(p) ? ' · 🌙 NIGHT — encounter +40%, escape −20%' : ''}</span>`);
+  log(`<br><span class="title">${loc.icon} ${loc.name.toUpperCase()}</span> <span class="sys">${stars(loc.danger)} ${loc.danger}/5</span><br>${loc.desc}<br><span class="sys">${fmtTime(p)} · ${WEATHER_ICON[S.weather]}${isNight(p) ? ' · 🌙 NIGHT — encounter +40%, escape −20%' : ''}</span>`);
   if (isNight(p)) log(`<span class="bad">🌙 Night. The dark between the buildings seems to breathe.</span>`);
   // road ambush 20%
   if (Math.random() < 0.2) {
@@ -830,7 +830,7 @@ function showExplore(locId, quiet = false) {
   const loc = LOCATIONS[locId || p.locationId];
   if (!loc) return goHome();
   ZScene.setMode('explore');
-  if (!quiet) log(`<br>What do you do? <span class="sys">(depth ${p.depth} · noise ${Math.round(p.noise)})</span>`);
+  if (!quiet) log(`<br>What do you do? <span class="sys">(depth ${p.depth} · noise ${Math.round(p.noise)} · ${stars(loc.danger)} ${loc.danger}/5)</span>`);
   const acts = loc.rooms.map(r => {
     if (p.searched?.[r.id]) return { label: `✓ ${r.name} <span class="sys">picked clean</span>`, disabled: true, fn: () => {} };
     if (r.gather) {
@@ -948,13 +948,16 @@ function resolveEvent(loc, room, forced) {
   const type = forced ? 'combat' : encounterRoll(p, loc, room.dangerMod || 0, S.weather);
   ZScene.addNoiseRing(p.noise);
   if (type === 'combat') {
-    const n = Math.random() < 0.25 ? 2 : 1;
+    // Stars decide how many can be on you at once: a calm run rarely pairs,
+    // a 5★ run often does.
+    const pairChance = 0.12 + (loc.danger + (room.dangerMod || 0)) * 0.07;
+    const n = Math.random() < pairChance ? 2 : 1;
     const enemies = pickEnemies(loc, n);
     log(`<br>🧟 <b>${enemies.map(e => e.name).join(' + ')}</b> lurches from the dark!`);
     startCombat(enemies);
   } else if (type === 'loot') {
     const table = room.loot || 'general';
-    const items = rollLoot(table, room.dangerMod || 0);
+    const items = rollLoot(table, (loc.danger || 0) + (room.dangerMod || 0));
     // food rooms always pay something edible on top
     if (table === 'food') items.push('canned_food');
     // home-ground advantage from chosen site
@@ -1226,7 +1229,7 @@ function dogEvent(loc) {
       advanceTime(p, 20);
       p.san = clamp(p.san + 4, 0, p.maxSan); p.rep += 2;
       log(`It wolfs the food — then grabs your sleeve and drags you to a buried cache! <span class="san">🧠 +4, Rep +2.</span>`);
-      giveItems(rollLoot('general'), loc, `Cache:`);
+      giveItems(rollLoot('general', loc.danger || 0), loc, `Cache:`);
     } },
     { label: `🔪 Hunt it<br><small>meat ×2 + leather · −rep −sanity</small>`, danger: true, fn: () => {
       advanceTime(p, 15);
