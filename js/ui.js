@@ -972,8 +972,8 @@ function resolveEvent(loc, room, forced) {
     if (table === 'wood' && t.gather === 'wood') items.push('wood');
     if (table === 'stone' && t.gather === 'stone') items.push('stone');
     ZScene.spawnLoot(items.length);
-    log(`<br>🔎 You search carefully <span class="sys">(+35 min, better finds, but the light is dying)</span>…`);
-    advanceTime(p, 35);
+    log(`<br>🔎 You search carefully <span class="sys">(+25 min, better finds, but the light is dying)</span>…`);
+    advanceTime(p, 25);
     const got = [], dropped = [];
     for (const id of items) {
       if (addItem(p, id, 1)) { got.push(itemName(id)); }
@@ -985,7 +985,7 @@ function resolveEvent(loc, room, forced) {
       log(`<span class="bad">Backpack full! You must leave: ${dropped.join(', ')}</span> — or drop something now:`);
       return offerDrop(dropped, () => afterRoom(loc));
     }
-    if (Math.random() < 0.3) { // loot noise → follow-up zombie 30%
+    if (Math.random() < 0.18) { // loot noise → follow-up zombie 18%
       log(`<span class="sys">Glass clinks. Something heard you…</span>`);
       p.noise = clamp(p.noise + 15, 0, 100);
       if (Math.random() < 0.5) { startCombat(pickEnemies(loc, 1)); return; }

@@ -124,9 +124,9 @@ export function isNight(p) { const h = (p.minute / 60) % 24; return h >= 20 || h
 export function advanceTime(p, mins, drainMul = 1) {
   p.minute += mins;
   while (p.minute >= 24 * 60) { p.minute -= 24 * 60; p.day += 1; }
-  // hunger/thirst drain ~3 per hour. `drainMul` lets a caller say "this time is
+  // hunger/thirst drain ~2.2 per hour. `drainMul` lets a caller say "this time is
   // spent asleep" — you burn less lying still than you do walking (see doSleep).
-  const drain = (mins / 60) * 3 * drainMul;
+  const drain = (mins / 60) * 2.2 * drainMul;
   p.hunger = clamp(p.hunger - drain, 0, p.maxHunger);
   p.thirst = clamp(p.thirst - drain * 1.2 * (p.thirstSaver ? 0.75 : 1), 0, p.maxThirst);
   p.noise = clamp(p.noise - mins * 0.25, 0, 100);
