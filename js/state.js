@@ -61,6 +61,7 @@ export function loadGame() {
     data.player.gardenCrop ??= null;
     data.player.tools ??= {};
     data.player.toolId ??= 'none';
+    data.player.owned ??= {}; // found/forged gear waits in the bag until equipped
     normalizeInv(data.player); // heal display-name keys, whatever their source
     if (data.player.base) {
       data.player.base.stash ??= {};

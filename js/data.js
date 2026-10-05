@@ -1,11 +1,21 @@
 // ALL game balance/content lives here. systems.js / ui.js must not hardcode numbers.
 export const SAVE_VERSION = 4;
 
+// `trait` = the signature move (§18). Numbers alone don't make a weapon feel
+// different; the trait does. See playerAttack() for the mechanics.
 export const WEAPONS = {
-  kitchen_knife: { id:'kitchen_knife', name:'Kitchen Knife', kind:'knife', damage:12, crit:0.15, stamina:8, durability:40, stun:0.05, ap:0, noise:5, price:0, desc:'Fast, high crit, low damage. Quiet.' },
-  baseball_bat: { id:'baseball_bat', name:'Baseball Bat', kind:'blunt', damage:16, crit:0.10, stamina:12, durability:50, stun:0.28, ap:0, noise:15, price:40, desc:'Medium damage, high stun, knockback.' },
-  crowbar:      { id:'crowbar', name:'Crowbar', kind:'tool', damage:14, crit:0.12, stamina:10, durability:70, stun:0.10, ap:0.5, noise:10, price:50, canOpen:true, desc:'Armor penetration. Opens locked containers.' },
-  survival_sword:{ id:'survival_sword', name:'Survival Sword', kind:'blade', damage:20, crit:0.18, stamina:14, durability:60, stun:0.08, ap:0.2, noise:12, price:95, desc:'Balanced. Good damage, crit, durability.' },
+  // Knives — the bleed line. Fast, crit-heavy, cheap on stamina; the edge goes
+  // fast and the wound keeps working after the hit.
+  kitchen_knife: { id:'kitchen_knife', name:'Kitchen Knife', kind:'knife', trait:'bleed', damage:12, crit:0.15, stamina:8, durability:40, stun:0.05, ap:0.1, noise:5, price:0, desc:'Fast and quiet. Opens a bleed that keeps working.' },
+  hunting_knife: { id:'hunting_knife', name:'Hunting Knife', kind:'knife', trait:'bleed', damage:21, crit:0.20, stamina:8, durability:35, stun:0.05, ap:0.1, noise:5, price:70, desc:'Cuts deep, crits often, bleeds hard. The edge goes fast.' },
+  // Blunt — the stun line, and knockback in a crowd. Low damage on purpose:
+  // the value is the free turn, not the number.
+  baseball_bat:  { id:'baseball_bat', name:'Baseball Bat', kind:'blunt', trait:'knockback', damage:16, crit:0.10, stamina:12, durability:50, stun:0.28, ap:0, noise:15, price:40, desc:'Nailed and taped. Solid stun — heavy hits shove foes to the back.' },
+  pipe:          { id:'pipe', name:'Lead Pipe', kind:'blunt', trait:'stun', damage:9, crit:0.05, stamina:8, durability:80, stun:0.45, ap:0, noise:12, price:30, desc:'Ugly damage, but it rings skulls. Nearly nothing shrugs it off.' },
+  sledgehammer:  { id:'sledgehammer', name:'Sledgehammer', kind:'blunt', trait:'knockback', damage:13, crit:0.04, stamina:20, durability:95, stun:0.60, ap:0.2, noise:22, price:65, desc:'Railway steel. The top stunner — slow, tiring, and it shoves.' },
+  // Specialty
+  crowbar:       { id:'crowbar', name:'Crowbar', kind:'tool', trait:'sunder', damage:14, crit:0.12, stamina:10, durability:70, stun:0.10, ap:0.6, noise:10, price:50, canOpen:true, desc:'Armor penetration. Pries plating loose — the answer to an Armored Z.' },
+  survival_sword:{ id:'survival_sword', name:'Survival Sword', kind:'blade', trait:'cleave', damage:20, crit:0.18, stamina:14, durability:60, stun:0.08, ap:0.2, noise:12, price:95, desc:'Balanced. The swing carries into a second foe.' },
 };
 
 // Tools ride on the belt, not in the hand: gathering bonus only, never fight.
@@ -17,8 +27,11 @@ export const TOOLS = {
 export const ARMORS = {
   none:          { id:'none', name:'Torn Clothes', def:0, price:0, desc:'Barely protection.' },
   cloth_jacket:  { id:'cloth_jacket', name:'Cloth Jacket', def:2, price:20, desc:'Light protection.' },
+  padded_coat:   { id:'padded_coat', name:'Padded Coat', def:3, price:30, desc:'Quilted layers. A little goes a long way.' },
   leather_jacket:{ id:'leather_jacket', name:'Leather Jacket', def:5, price:55, desc:'Solid early armor.' },
   police_vest:   { id:'police_vest', name:'Police Vest', def:8, price:110, desc:'Best early-game armor.' },
+  scrap_plate:   { id:'scrap_plate', name:'Scrap Plate', def:10, price:150, desc:'Car-door plates strapped over hide. Heavy, but it holds.' },
+  riot_armor:    { id:'riot_armor', name:'Riot Armor', def:14, price:220, desc:'Station salvage. The best a survivor can wear.' },
 };
 
 export const ACCESSORIES = {
@@ -48,11 +61,22 @@ export const ITEMS = {
   seeds:       { id:'seeds', name:'Seeds', type:'craft', price:2, desc:'Plant in the garden. Food grows here.' },
 };
 
+// §19 tiers. `resist` is a fraction of incoming damage the corpse shrugs off,
+// and `ap` on a weapon cuts through it — that pairing is why an Armored Z. is a
+// different fight, not just a bigger number. `dodge` slips committed (heavy) swings.
 export const ZOMBIES = {
-  walker: { id:'walker', name:'Walker', hp:38, damage:8, speed:2, fleeMod:-0.05, behavior:'Slow but predictable. Shambling.', color:0x6a8f5f },
-  rotten: { id:'rotten', name:'Rotten', hp:28, damage:6, speed:2, fleeMod:0.05, behavior:'Decayed and weak, but its smell shakes your mind.', color:0x7d8f4f, sanityHit:4 },
-  runner: { id:'runner', name:'Runner', hp:30, damage:12, speed:5, fleeMod:-0.25, behavior:'Fast and dangerous. Fleeing is hard.', color:0x9f5f5f },
-  boar: { id:'boar', name:'Wild Boar', hp:34, damage:10, speed:4, fleeMod:-0.15, behavior:'Territorial and angry. It charges.', color:0x7a5a4a },
+  // ---- early: the shambling baseline ----
+  rotten:  { id:'rotten', name:'Rotten', tier:'early', hp:26, damage:5, speed:2, resist:0, fleeMod:0.05, behavior:'Decayed and weak, but its smell shakes your mind.', color:0x7d8f4f, sanityHit:4 },
+  walker:  { id:'walker', name:'Walker', tier:'early', hp:40, damage:9, speed:2, resist:0, fleeMod:-0.05, behavior:'Slow but predictable. Shambling.', color:0x6a8f5f },
+  runner:  { id:'runner', name:'Runner', tier:'early', hp:30, damage:13, speed:5, resist:0, fleeMod:-0.25, behavior:'Fast and dangerous. Fleeing is hard.', color:0x9f5f5f },
+  // ---- mid: real threats, each with a trick ----
+  screamer:{ id:'screamer', name:'Screamer', tier:'mid', hp:30, damage:5, speed:3, resist:0, fleeMod:0, scream:true, behavior:'Weak and fast, but its shriek drags the dead in from every alley.', color:0x9b7fd0 },
+  hunter:  { id:'hunter', name:'Hunter', tier:'mid', hp:46, damage:14, speed:4, resist:0.15, dodge:0.25, fleeMod:-0.2, behavior:'Lean and quick. It reads your swing and slips the heavy ones.', color:0x8a7f5f },
+  brute:   { id:'brute', name:'Brute', tier:'mid', hp:100, damage:24, speed:1, resist:0.2, fleeMod:-0.45, noStun:true, behavior:'Enormous and slow. Your best shot barely fazes it.', color:0x5c6b46 },
+  // ---- special: armored. Edges skate off it. Bring a crowbar. ----
+  armored: { id:'armored', name:'Armored Z.', tier:'special', hp:62, damage:13, speed:2, resist:0.5, fleeMod:-0.1, behavior:'Riot plating under dead skin. Blades skate off — bars pry it open.', color:0x55616b },
+  // wildlife (not a zombie, but it fights in the same system)
+  boar:    { id:'boar', name:'Wild Boar', tier:'wild', hp:34, damage:10, speed:4, resist:0, fleeMod:-0.15, behavior:'Territorial and angry. It charges.', color:0x7a5a4a },
 };
 
 export const LOCATIONS = {
@@ -69,7 +93,7 @@ export const LOCATIONS = {
   },
   residential: {
     id:'residential', name:'Residential Area', icon:'🏘️', distance:3, danger:3,
-    loot:['general','general','food','medicine'], enemies:['walker','rotten','rotten','runner'],
+    loot:['general','general','food','medicine'], enemies:['walker','rotten','rotten','runner','screamer'],
     desc:'Silent houses with open doors. Curtains move though there is no wind.',
     rooms:[
       { id:'house1', name:'Blue House', loot:'general', dangerMod:0, text:'Family photos on the wall. The kitchen was searched in a hurry.' },
@@ -80,7 +104,7 @@ export const LOCATIONS = {
   },
   gas_station: {
     id:'gas_station', name:'Gas Station', icon:'⛽', distance:2, danger:3,
-    loot:['general','general','craft'], enemies:['walker','runner','runner','rotten'],
+    loot:['general','general','craft'], enemies:['walker','runner','runner','rotten','screamer'],
     desc:'A rusted sign creaks. The shop windows are smashed. Fuel stains darken the concrete.',
     rooms:[
       { id:'shop', name:'Station Shop', loot:'food', dangerMod:1, text:'Shelves knocked over. The fridge hums — impossibly — then stops.' },
@@ -91,7 +115,7 @@ export const LOCATIONS = {
   },
   forest: {
     id:'forest', name:'Whispering Forest', icon:'🌲', distance:2, danger:2,
-    loot:['wood','wood','general'], enemies:['walker','walker','rotten','rotten'],
+    loot:['wood','wood','general'], enemies:['walker','walker','rotten','rotten','hunter'],
     desc:'Pines press close. Deadfall timber lies everywhere — exactly what a new camp needs. Something moves between the trunks.',
     rooms:[
       { id:'grove', name:'Dense Grove', loot:'wood', dangerMod:0, text:'Fallen trunks, dry branches. Good timber, poor visibility.' },
@@ -103,7 +127,7 @@ export const LOCATIONS = {
   },
   quarry: {
     id:'quarry', name:'Collapsed Quarry', icon:'⛰️', distance:4, danger:3,
-    loot:['stone','stone','craft'], enemies:['walker','rotten','runner'],
+    loot:['stone','stone','craft'], enemies:['walker','rotten','runner','brute','hunter','armored'],
     desc:'Terraced rock walls and crushed machinery. Stone for walls, scrap for tools. The echoes here carry far.',
     rooms:[
       { id:'pit', name:'Crusher Pit', loot:'stone', dangerMod:1, text:'Broken rock heaps under a rusted crusher. Every footstep echoes.' },
@@ -115,7 +139,7 @@ export const LOCATIONS = {
   },
   factory: {
     id:'factory', name:'Abandoned Factory', icon:'🏭', distance:5, danger:4,
-    loot:['craft','craft','general'], enemies:['walker','runner','runner','rotten'],
+    loot:['craft','craft','general'], enemies:['walker','runner','runner','rotten','brute','armored'],
     desc:'Silent assembly lines under a soot-stained roof. Metal, parts, everything a workshop dreams of — guarded by the old shift.',
     rooms:[
       { id:'assembly', name:'Assembly Line', loot:'craft', dangerMod:1, text:'Half-built machines. Wrenches, brackets, blessed scrap.' },
@@ -146,6 +170,10 @@ export const LOOT_TABLES = {
   stone:    ['stone','stone','stone','stone','stone','metal'],
 };
 
+// Real gear only turns up where it is hard — locked rooms and high-danger
+// locations push toward this list instead of another battery. §27: no guarantees.
+export const RARE_GEAR = ['crowbar','baseball_bat','pipe','sledgehammer','hunting_knife','cloth_jacket','padded_coat','leather_jacket','police_vest','scrap_plate','riot_armor','flashlight','gas_mask','survival_sword'];
+
 export const MERCHANT_BASE = [
   { id:'bandage', qty:5 }, { id:'painkillers', qty:3 }, { id:'canned_food', qty:6 },
   { id:'water_bottle', qty:6 }, { id:'lockpick', qty:2 }, { id:'sanity_kit', qty:2 },
@@ -170,8 +198,9 @@ export const ANIMAL_POOL = {
   quarry:['crow','rat','rat'],
   factory:['rat','rat','crow'],
 };
-// merchant buy-back for surplus goods (animals → money → gear)
-export const SELL_PRICES = { wood:1, stone:1, scrap:2, cloth:2, metal:4, leather:6, battery:6 };
+// merchant buy-back for surplus goods (animals → money → gear).
+// Kept deliberately below the ITEMS price: eating/wearing beats selling.
+export const SELL_PRICES = { wood:1, stone:1, scrap:2, cloth:2, metal:4, leather:6, battery:6, raw_meat:2, cooked_meat:5, seeds:1 };
 
 export const NPCS = [
   { id:'jack', name:'Jack — Mechanic', text:'"Bring me 6 scrap and I\'ll reinforce your weapon. Keeps you alive out there."', quest:{ need:'scrap', qty:6, reward:{ money:40 } } },
@@ -179,17 +208,35 @@ export const NPCS = [
   { id:'miller', name:'Miller — Ex-Cop', text:'"You fight like a civilian. Take this tip: aim for the head when it charges. Free lesson."', quest:null },
 ];
 
-export const FORGE_UPGRADES = {
-  sharpen:   { name:'Sharpen Blade', desc:'Damage +3', cost:{ scrap:4, metal:2, money:25 }, apply:{ damage:3 } },
-  reinforce: { name:'Reinforce Handle', desc:'Max durability +10 & repair full', cost:{ scrap:5, metal:3, money:30 }, apply:{ maxDura:10, repair:true } },
-  balance:   { name:'Balance Weapon', desc:'Crit +4%, Stamina cost -2', cost:{ scrap:3, metal:3, money:35 }, apply:{ crit:0.04, stamina:-2 } },
-  repair:    { name:'Repair', desc:'Restore durability to full', cost:{ scrap:2, money:10 }, apply:{ repair:true } },
-};
+// Weapon upgrades were removed by design: a weapon is found or forged, then
+// worn out and replaced. The Forge now only tunes the base (structures + stash).
+// Durability warns at 30% and damage halves at 0 — there is no repair.
 
-// forge-craftable tools: no money, just hauled materials (workshop required)
+// forge-craftable gear: no money, just hauled materials (workshop required).
+// Money only buys food/consumables now, so EVERY piece of gear needs a recipe
+// here — the Equipment screen is equip-only.
 export const FORGE_CRAFTS = {
+  // belt tools
   fire_axe: { cost:{ wood:3, metal:2 }, desc:'Chops +1 wood.' },
   pickaxe:  { cost:{ wood:2, metal:2, scrap:2 }, desc:'Breaks +1 stone.' },
+  // weapons — knives (damage) and blunt (stun)
+  baseball_bat:   { cost:{ wood:4, scrap:3 }, desc:'Nailed and taped. A real weapon.' },
+  pipe:           { cost:{ metal:3, scrap:2 }, desc:'Bent conduit. Rings skulls; barely bruises bone.' },
+  sledgehammer:   { cost:{ metal:7, scrap:5, wood:2 }, desc:'Railway steel on a hardwood haft. Slow, but it stuns.' },
+  hunting_knife:  { cost:{ metal:4, scrap:3, leather:2 }, desc:'Ground thin and sharp. Cuts deep, wears fast.' },
+  crowbar:        { cost:{ metal:5, scrap:2 }, desc:'Bent bar stock. Opens what patience cannot.' },
+  survival_sword: { cost:{ metal:8, scrap:6, leather:2 }, desc:'Ground down from a leaf spring. The long haul.' },
+  // armor
+  cloth_jacket:   { cost:{ cloth:4, leather:2 }, desc:'Quilted and patched.' },
+  padded_coat:    { cost:{ cloth:5, leather:2 }, desc:'Layers of quilt and rag. Cheap protection.' },
+  leather_jacket: { cost:{ leather:4, cloth:3 }, desc:'Stitched hides. Proper protection.' },
+  police_vest:    { cost:{ metal:6, leather:5, cloth:4 }, desc:'Plates cut from a car door, strapped tight.' },
+  scrap_plate:    { cost:{ metal:8, leather:6, scrap:4 }, desc:'Heavier plating over hide. The long grind pays off.' },
+  riot_armor:     { cost:{ metal:10, leather:8, cloth:6 }, desc:'Station salvage, refitted. The best a survivor will wear.' },
+  // kit
+  flashlight:     { cost:{ scrap:2, metal:2, battery:1 }, desc:'Reveals loot at night.' },
+  backpack:       { cost:{ cloth:6, leather:3 }, desc:'Carrying capacity +8.' },
+  gas_mask:       { cost:{ cloth:3, metal:2, scrap:2 }, desc:'Filters the rotten air.' },
 };
 
 // field dressings: consumable recipes, rendered automatically (workshop required)
@@ -212,6 +259,11 @@ export const ITEM_ICON = {
   canned_food:'🥫', water_bottle:'💧', lockpick:'🗝️',
   scrap:'⚙️', metal:'🔩', battery:'🔋', wood:'🪵', stone:'🪨', cloth:'🧵',
   raw_meat:'🥩', cooked_meat:'🍗', leather:'🟫', seeds:'🌰',
+  // gear can sit in the backpack now, so it needs a bag icon too
+  kitchen_knife:'🔪', baseball_bat:'🏏', crowbar:'🔧', survival_sword:'⚔️',
+  cloth_jacket:'🧥', leather_jacket:'🧥', police_vest:'🦺',
+  fire_axe:'🪓', pickaxe:'⛏️',
+  backpack:'🎒', flashlight:'🔦', gas_mask:'😷',
 };
 
 // Base building. Every structure unlocks a service or passive. Costs reference

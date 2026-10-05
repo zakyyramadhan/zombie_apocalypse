@@ -1,5 +1,5 @@
 // Pure game logic. No DOM, no Three.js. Testable with node.
-import { WEAPONS, TOOLS, ZOMBIES, LOOT_TABLES, ENCOUNTER_WEIGHTS, MERCHANT_BASE, ITEMS, ITEM_ICON, STASH_LEVELS } from './data.js';
+import { WEAPONS, TOOLS, ARMORS, ACCESSORIES, ZOMBIES, LOOT_TABLES, RARE_GEAR, ENCOUNTER_WEIGHTS, MERCHANT_BASE, ITEMS, ITEM_ICON, STASH_LEVELS, SELL_PRICES } from './data.js';
 
 export const rng = {
   f: Math.random,
@@ -15,9 +15,10 @@ export function newPlayer() {
     hp: 100, maxHp: 100, san: 80, maxSan: 100, sta: 100, maxSta: 100,
     hunger: 80, maxHunger: 100, thirst: 70, maxThirst: 100,
     money: 50,
-    weaponId: 'kitchen_knife', weaponBonus: { damage: 0, crit: 0, stamina: 0, maxDura: 0 },
+    weaponId: 'kitchen_knife',
     weaponDura: WEAPONS.kitchen_knife.durability,
     tools: {}, toolId: 'none', // owned tools + equipped tool (gather bonus, never fights)
+    owned: {},                // gear you actually own (found or forged), separate from what's equipped
     armorId: 'none', accessoryId: 'none',
     inv: { bandage: 1, canned_food: 2, water_bottle: 1, scrap: 2 },
     kills: 0, explored: 0, looted: 0, day: 1, minute: 8 * 60,
@@ -32,15 +33,10 @@ export function newPlayer() {
   };
 }
 
+// A weapon is exactly its table row now — forge upgrades were removed, so
+// there is no bonus layer. Shallow copy so callers can never mutate the table.
 export function weaponOf(p) {
-  const base = WEAPONS[p.weaponId] || WEAPONS.kitchen_knife;
-  return {
-    ...base,
-    damage: base.damage + (p.weaponBonus.damage || 0),
-    crit: base.crit + (p.weaponBonus.crit || 0),
-    stamina: Math.max(3, base.stamina + (p.weaponBonus.stamina || 0)),
-    durability: base.durability + (p.weaponBonus.maxDura || 0),
-  };
+  return { ...(WEAPONS[p.weaponId] || WEAPONS.kitchen_knife) };
 }
 
 export function invCount(p) { return Object.values(p.inv).reduce((a, b) => a + b, 0); }
@@ -54,7 +50,9 @@ export function canonId(id) {
   if (ITEMS[id] || WEAPONS[id]) return id;
   if (!_canon) {
     _canon = {};
-    for (const [key, def] of [...Object.entries(ITEMS), ...Object.entries(WEAPONS), ...Object.entries(TOOLS)]) {
+    for (const [key, def] of [...Object.entries(ITEMS), ...Object.entries(WEAPONS), ...Object.entries(TOOLS),
+                              ...Object.entries(ARMORS), ...Object.entries(ACCESSORIES)]) {
+      if (key === 'none') continue;             // the empty-slot placeholder is not an item
       _canon[key.toLowerCase()] = key;
       if (def.name) _canon[def.name.toLowerCase().replace(/\s+/g, '_')] = key;
     }
@@ -85,6 +83,34 @@ export function removeItem(p, id, qty = 1) {
   if ((p.inv[id] || 0) < qty) return false;
   p.inv[id] -= qty;
   if (p.inv[id] <= 0) delete p.inv[id];
+  return true;
+}
+
+// ---- gear ownership ----
+// Money buys food and consumables. Gear is FORGED at the workshop or found in
+// the world, so "owned" has to be tracked separately from "equipped" —
+// otherwise buying/finding a second weapon silently deletes the first.
+export function gearDef(id) { return TOOLS[id] || WEAPONS[id] || ARMORS[id] || ACCESSORIES[id] || null; }
+export function gearSlot(id) {
+  if (TOOLS[id]) return 'toolId';
+  if (WEAPONS[id]) return 'weaponId';
+  if (ARMORS[id]) return 'armorId';
+  return ACCESSORIES[id] ? 'accessoryId' : null;
+}
+export function ownsGear(p, id) {
+  return TOOLS[id] ? !!((p.tools || {})[id]) : !!((p.owned || {})[id]);
+}
+export function grantGear(p, id) {           // forge output / picked up in the world
+  if (TOOLS[id]) { p.tools ??= {}; p.tools[id] = true; }
+  else { p.owned ??= {}; p.owned[id] = true; }
+  return true;
+}
+export function equipGear(p, id) {
+  const slot = gearSlot(id);
+  if (!slot || !ownsGear(p, id)) return false;
+  p[slot] = id;
+  // wear travels with the survivor, not the weapon: switching never repairs
+  if (WEAPONS[id]) p.weaponDura = Math.min(Math.max(p.weaponDura, 1), WEAPONS[id].durability);
   return true;
 }
 
@@ -176,15 +202,26 @@ export function encounterRoll(p, loc, dangerMod = 0, weather = 'clear') {
   return 'loot';
 }
 
-export function rollLoot(tableId) {
+export function rollLoot(tableId, danger = 0) {
   const table = LOOT_TABLES[tableId] || LOOT_TABLES.general;
   const out = [rng.pick(table)];
   if (rng.chance(0.35)) out.push(rng.pick(table));
-  if (rng.chance(0.06)) out.push('battery'); // rare stays rare
+  // rare stays rare — and must not double up when the table already rolled one.
+  // Locked / high-danger rooms trade some batteries for real gear (§27).
+  if (rng.chance(0.06)) {
+    const pick = danger >= 2 && rng.chance(0.5) ? rng.pick(RARE_GEAR) : 'battery';
+    if (!out.includes(pick)) out.push(pick);
+  }
   return out;
 }
 
 // ---- combat math (pure, returns events) ----
+// Weapon `trait` is the signature move (§18) — the numbers alone don't carry it:
+//   bleed     knives    — the wound keeps working after the hit (stacks)
+//   knockback blunt     — a heavy stun shoves the foe to the back of the pack
+//   sunder    crowbar   — armor penetration; each hit pries the plating looser
+//   cleave    sword     — the swing carries into a second foe
+//   stun      the rest  — plain, reliable flinch
 export function playerAttack(p, zombie, action) {
   const w = weaponOf(p);
   const broken = p.weaponDura <= 0;
@@ -199,6 +236,11 @@ export function playerAttack(p, zombie, action) {
   p.weaponDura = Math.max(0, p.weaponDura - (action === 'heavy' ? 2 : 1));
   p.noise = clamp(p.noise + noiseAdd, 0, 100);
 
+  // §19 Hunter: reads your swing and slips the committed (heavy) ones.
+  if (zombie?.dodge && action === 'heavy' && rng.chance(zombie.dodge)) {
+    return { ok: true, miss: true, dodged: true, staCost, noiseAdd };
+  }
+
   let critC = w.crit * critMul;
   if (broken) critC *= 0.5;
   const hitChance = 0.92 * accMul * sanityCombatPenalty(p);
@@ -207,15 +249,35 @@ export function playerAttack(p, zombie, action) {
   let dmg = w.damage * dmgMul * (broken ? 0.5 : 1);
   if (p.weaponDura < w.durability * 0.25) dmg *= 0.8;
   dmg *= (isCrit ? 2 : 1) * (0.85 + Math.random() * 0.3);
+  // Armor: `resist` is the fraction of damage the corpse shrugs off, and the
+  // weapon's `ap` cuts through it. This is what makes an Armored Z. a different
+  // fight instead of a bigger health bar — an edge skates off, a bar pries it.
+  const resist = zombie?.resist || 0;
+  if (resist) dmg *= 1 - resist * (1 - (w.ap || 0));
   dmg = Math.max(1, Math.round(dmg));
-  // armor penetration vs nothing in MVP (future armored zombies) — crowbar bonus flavor
-  const stunned = rng.chance(w.stun + (action === 'heavy' ? 0.15 : 0));
-  return { ok: true, dmg, crit: isCrit, stunned, staCost, noiseAdd };
+
+  const stunned = !zombie?.noStun && rng.chance(w.stun + (action === 'heavy' ? 0.15 : 0));
+  const out = { ok: true, dmg, crit: isCrit, stunned, staCost, noiseAdd };
+  if (w.trait === 'bleed') out.bleed = isCrit ? 2 : 1;          // crits open a worse wound
+  if (w.trait === 'sunder' && resist > 0) out.sunder = 0.15;    // pries the plating looser
+  if (w.trait === 'cleave') out.cleave = Math.max(1, Math.round(dmg * 0.5));
+  return out;
+}
+
+// Bleed ticks once per round, on every bleeding foe. Stacks decay by one per
+// tick. Pure: hands back the foe reference + damage, so the UI just paints it.
+export function bleedTick(enemies) {
+  const out = [];
+  for (const e of enemies) {
+    if (!(e.bleed > 0)) continue;
+    out.push({ foe: e, dmg: e.bleed, next: e.bleed - 1 });
+  }
+  return out;
 }
 
 export function zombieAttack(p, zombie, playerGuard) {
   // playerGuard: 'dodge' | 'block' | null
-  const armorDef = { none: 0, cloth_jacket: 2, leather_jacket: 5, police_vest: 8 }[p.armorId] ?? 0;
+  const armorDef = ARMORS[p.armorId]?.def ?? 0; // one source of truth: data.js
   let dmg = zombie.damage * (0.85 + Math.random() * 0.3);
   if (p.hunger < 25) dmg *= 1.1;
   if (playerGuard === 'dodge') {
@@ -288,6 +350,27 @@ export function merchantStock(day) {
     const price = Math.round(base.price * (0.9 + rnd() * 0.4));
     return { ...s, price, qty };
   }).filter(s => s.qty > 0);
+}
+
+// ---- market mood (hashed day seed) ----
+// The merchant's line promises "prices move with the days"; before this only
+// his BUY prices did. 0.80x (dull) .. 1.30x (keen) — selling is a timing call.
+// NB: seeding straight from `day * C` fed the LCG an arithmetic sequence and the
+// "market" came out as a perfect 2-day cycle (keen/steady/keen/steady). Hash the
+// day first, then splitmix32-mix it, so consecutive days decorrelate.
+export function marketMood(day) {
+  let s = Math.imul(day | 0, 2654435761) >>> 0;
+  s ^= s >>> 15; s = Math.imul(s, 2246822507) >>> 0;
+  s ^= s >>> 13; s = Math.imul(s, 3266489909) >>> 0;
+  s ^= s >>> 16;
+  return 0.8 + ((s >>> 0) / 4294967295) * 0.5;
+}
+export function marketLabel(m) {
+  return m < 0.95 ? 'dull — hold your haul' : m > 1.15 ? 'keen — good day to sell' : 'steady';
+}
+export function sellPrice(id, day) {
+  const base = SELL_PRICES[id];
+  return base ? Math.max(1, Math.round(base * marketMood(day))) : 0;
 }
 
 // ---- score (deeds, not levels) ----

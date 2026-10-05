@@ -1,6 +1,6 @@
 // UI + game flow. Text is authoritative; Three.js is visualization.
-import { WEAPONS, TOOLS, ARMORS, ACCESSORIES, ITEMS, ITEM_ICON, ZOMBIES, LOCATIONS, LOOT_TABLES, FORGE_UPGRADES, FORGE_CRAFTS, FIELD_RECIPES, STASH_LEVELS, CHURCH_ACTIONS, NPCS, STRUCTURES, BUILD_ORDER, SITES, RES_ICON, ANIMALS, ANIMAL_POOL, SELL_PRICES } from './data.js';
-import { weaponOf, toolOf, tableIcons, invCount, invCap, stashCap, addItem, removeItem, normalizeInv, fmtTime, isNight, advanceTime, rollWeather, WEATHER_ICON, sanityTier, maybePanic, encounterRoll, rollLoot, playerAttack, zombieAttack, fleeChance, merchantStock, survivalScore, clamp, hasStruct, baseLevel, canAfford, payCost, costText, newBase } from './systems.js';
+import { WEAPONS, TOOLS, ARMORS, ACCESSORIES, ITEMS, ITEM_ICON, ZOMBIES, LOCATIONS, LOOT_TABLES, FORGE_CRAFTS, FIELD_RECIPES, STASH_LEVELS, CHURCH_ACTIONS, NPCS, STRUCTURES, BUILD_ORDER, SITES, RES_ICON, ANIMALS, ANIMAL_POOL, SELL_PRICES } from './data.js';
+import { weaponOf, toolOf, tableIcons, invCount, invCap, stashCap, addItem, removeItem, normalizeInv, fmtTime, isNight, advanceTime, rollWeather, WEATHER_ICON, sanityTier, maybePanic, encounterRoll, rollLoot, playerAttack, bleedTick, zombieAttack, fleeChance, merchantStock, survivalScore, sellPrice, marketMood, marketLabel, gearDef, gearSlot, ownsGear, grantGear, equipGear, clamp, hasStruct, baseLevel, canAfford, payCost, costText, newBase } from './systems.js';
 import { ZScene } from './three-scene.js';
 
 let S = null;          // { player, weather, merchantDay, world }
@@ -127,6 +127,19 @@ function die(cause) {
 }
 
 // ---------- item use ----------
+// Gear used to be shop-only, so "owned" was just `slot === id`. Found or forged
+// gear keeps its own record (systems ownsGear/grantGear) and waits in the pack
+// until you put it on.
+function equipFromBag(id) {
+  const p = P();
+  if (!removeItem(p, id, 1)) return;
+  grantGear(p, id);
+  if (!equipGear(p, id)) { addItem(p, id, 1); log(`<span class="bad">You can't wear that.</span>`); return; }
+  const d = gearDef(id);
+  log(`✅ Equipped <b>${d.name}</b> from your pack. ${d.desc || ''}`, 'good');
+  advanceTime(p, 5); useSave && useSave();
+  showInventory(invBack, true);
+}
 function useItem(id) {
   const p = P();
   const it = ITEMS[id];
@@ -417,7 +430,7 @@ function showMerchant(mode = 'buy', quiet = false) {
   screen = 'merchant';
   const p = P();
   const stock = merchantStock(p.day);
-  if (!quiet) log(`<br><span class="title">🏪 MERCHANT</span><br><span class="sys">"Supplies. Prices move with the days. And I buy goods too — meat, hides, parts."</span><br>Your money: <b>$${p.money}</b>`);
+  if (!quiet) log(`<br><span class="title">🏪 MERCHANT</span><br><span class="sys">"Supplies. Prices move with the days. And I buy goods too — meat, hides, parts."</span><br>Market: <b>${marketLabel(marketMood(p.day))}</b> · Your money: <b>$${p.money}</b>`);
   const acts = [
     { label: `🛒 Buy${mode === 'buy' ? ' ✅' : ''}`, fn: () => showMerchant('buy', true) },
     { label: `💰 Sell${mode === 'sell' ? ' ✅' : ''}`, fn: () => showMerchant('sell', true) },
@@ -441,18 +454,26 @@ function showMerchant(mode = 'buy', quiet = false) {
     }));
   } else {
     const sellable = Object.entries(SELL_PRICES).filter(([id]) => (p.inv[id] || 0) > 0);
-    if (!sellable.length) acts.push({ label: `<span class="sys">Nothing to sell — bring wood, scrap, hides.</span>`, disabled: true, fn: () => {} });
-    acts.push(...sellable.map(([id, price]) => ({
-      label: `${ITEM_ICON[id] || ''} Sell ${itemName(id)} ×${p.inv[id]} <span class="sys">$${price} ea</span>`,
-      fn: () => {
-        removeItem(p, id, 1);
-        p.money += price;
-        log(`Sold ${itemName(id)} <span class="good">+$${price}</span>.`);
-        advanceTime(p, 5);
+    if (!sellable.length) acts.push({ label: `<span class="sys">Nothing to sell — bring wood, scrap, hides, meat.</span>`, disabled: true, fn: () => {} });
+    for (const [id] of sellable) {
+      const n = p.inv[id], price = sellPrice(id, p.day);
+      const sellN = (qty) => () => {
+        if (!removeItem(p, id, qty)) return;
+        p.money += price * qty;
+        advanceTime(p, 5 * qty); // time is the real cost of selling in bulk
+        log(`Sold ${qty}× ${itemName(id)} <span class="good">+$${price * qty}</span> <span class="sys">(${5 * qty}m)</span>.`);
         useSave && useSave();
         showMerchant('sell', true);
-      }
-    })));
+      };
+      acts.push({
+        label: `${ITEM_ICON[id] || ''} Sell ${itemName(id)} ×1 <span class="sys">$${price}</span>`,
+        fn: sellN(1),
+      });
+      if (n > 1) acts.push({
+        label: `📦 Sell all ${n}× ${itemName(id)} <span class="sys">$${price * n} · ${5 * n}m</span>`,
+        fn: sellN(n),
+      });
+    }
   }
   acts.push({ label: '⬅ Back', wide: true, fn: showSettlement });
   setActions(acts);
@@ -462,51 +483,21 @@ function showMerchant(mode = 'buy', quiet = false) {
 function showForge() {
   screen = 'forge';
   const p = P();
-  const w = weaponOf(p);
-  log(`<br><span class="title">⚒️ FORGE</span><br><b>${w.name}</b> — DMG ${w.damage} · Crit ${Math.round(w.crit * 100)}% · Dura ${Math.round(p.weaponDura)}/${w.durability} · Stamina ${w.stamina}<br><span class="sys">Wood: ${p.inv.wood || 0} · Scrap: ${p.inv.scrap || 0} · Metal: ${p.inv.metal || 0} · $${p.money}</span>`);
-  if (p.weaponDura <= 0) log(`<span class="bad">⚠️ Weapon BROKEN — damage halved. Repair now.</span>`);
-  else if (p.weaponDura < w.durability * 0.3) log(`<span class="bad">⚠️ Low durability — damage reduced.</span>`);
-  const acts = [{ header: '⚒️ Tune Weapon <span class="sys">— cheapest first</span>' }];
-  for (const id of ['repair', 'sharpen', 'reinforce', 'balance']) {
-    const u = FORGE_UPGRADES[id];
-    const c = u.cost;
-    const afford = (p.inv.scrap || 0) >= (c.scrap || 0) && (p.inv.metal || 0) >= (c.metal || 0) && p.money >= (c.money || 0);
-    const costTxt = [c.scrap ? `Scrap×${c.scrap}` : '', c.metal ? `Metal×${c.metal}` : '', c.money ? `$${c.money}` : ''].filter(Boolean).join(' ');
+  log(`<br><span class="title">⚒️ FORGE</span><br><span class="sys">Craft gear from what you haul home. There are <b>no weapon upgrades</b> — a blade is worn until it dies, then you forge another. The Forge tunes the <b>base</b> and the <b>stash</b> only.</span><br>Wood ${p.inv.wood || 0} · Scrap ${p.inv.scrap || 0} · Metal ${p.inv.metal || 0} · Cloth ${p.inv.cloth || 0} · Leather ${p.inv.leather || 0} · Battery ${p.inv.battery || 0}`);
+  const acts = [];
+  acts.push({ header: '🛠️ Forge Gear <span class="sys">— materials only, never money</span>' });
+  for (const [id, c] of Object.entries(FORGE_CRAFTS)) {
+    const d = gearDef(id);
+    const owned = ownsGear(p, id);
+    const equipped = p[gearSlot(id)] === id;
     acts.push({
-      label: `${u.name} <span class="sys">${costTxt}</span><br><small>${u.desc}</small>`,
-      disabled: !afford,
-      fn: () => {
-        if (c.scrap) removeItem(p, 'scrap', c.scrap);
-        if (c.metal) removeItem(p, 'metal', c.metal);
-        p.money -= (c.money || 0);
-        if (u.apply.damage) p.weaponBonus.damage += u.apply.damage;
-        if (u.apply.crit) p.weaponBonus.crit += u.apply.crit;
-        if (u.apply.stamina) p.weaponBonus.stamina += u.apply.stamina;
-        if (u.apply.maxDura) p.weaponBonus.maxDura += u.apply.maxDura;
-        if (u.apply.repair) p.weaponDura = weaponOf(p).durability;
-        log(`⚒️ <b>${u.name}</b> applied to ${w.name}.`, 'good');
-        advanceTime(p, 20);
-        useSave && useSave();
-        showForge();
-      }
-    });
-  }
-  acts.push({ header: '🛠️ Craft Tools <span class="sys">— cheapest first</span>' });
-  for (const id of ['pickaxe', 'fire_axe']) {
-    const c = FORGE_CRAFTS[id];
-    const t = TOOLS[id];
-    const owned = !!(p.tools && p.tools[id]);
-    const equipped = p.toolId === id;
-    const afford = canAfford(p, c.cost);
-    acts.push({
-      label: `${equipped ? '✅' : '🛠️'} Forge ${t.name} <span class="sys">${costText(c.cost, RES_ICON)}</span><br><small>${c.desc} · no money, just materials · 40m</small>`,
-      disabled: equipped || !afford,
+      label: `${equipped ? '✅' : owned ? '🔧 owned' : '🛠️'} Forge ${d.name} <span class="sys">${owned ? 'see Equipment to wear it' : costText(c.cost, RES_ICON)}</span><br><small>${c.desc} · 40m</small>`,
+      disabled: owned || !canAfford(p, c.cost),
       fn: () => {
         if (!payCost(p, c.cost)) { log(`Not enough materials.`, 'bad'); return showForge(); }
-        p.tools ??= {};
-        p.tools[id] = true;
-        p.toolId = id;
-        log(`🛠️ Forged <b>${t.name}</b> from scrap and sweat. It rides on your belt.`, 'good');
+        grantGear(p, id);
+        equipGear(p, id);
+        log(`🛠️ Forged <b>${d.name}</b> from scrap and sweat. It's yours.`, 'good');
         advanceTime(p, 40);
         useSave && useSave();
         showForge();
@@ -596,77 +587,42 @@ function showEquipment(quiet = false) {
 function showEquipCat(cat, quiet = false) {
   screen = 'equipment';
   const p = P();
+  // Money buys food. Every piece of gear here is forged at the workshop or
+  // found in the world — this screen only decides what you are wearing.
+  const IDS = {
+    weapons: ['kitchen_knife', 'hunting_knife', 'baseball_bat', 'pipe', 'sledgehammer', 'crowbar', 'survival_sword'],
+    tools: ['pickaxe', 'fire_axe'],
+    armor: ['cloth_jacket', 'padded_coat', 'leather_jacket', 'police_vest', 'scrap_plate', 'riot_armor'],
+    kit: ['flashlight', 'backpack', 'gas_mask'],
+  };
   const titles = {
-    weapons: '⚔️ WEAPONS <span class="sys">— cheapest first</span>',
-    tools: '🔧 BELT TOOLS <span class="sys">— owned tools switch free</span>',
-    armor: '🦺 ARMOR <span class="sys">— lightest first</span>',
+    weapons: '⚔️ WEAPONS <span class="sys">— forged or found, never bought</span>',
+    tools: '🔧 BELT TOOLS <span class="sys">— owned gear switches free</span>',
+    armor: '🦺 ARMOR <span class="sys">— hides and scrap, stitched at the forge</span>',
     kit: '🎒 KIT <span class="sys">— one worn at a time</span>',
   };
   if (!quiet) log(`<br><span class="title">${titles[cat] || '🛡️ EQUIPMENT'}</span>`);
   const acts = [];
-  const back = () => showEquipment(true);
-  if (cat === 'weapons') {
-  for (const id of ['baseball_bat', 'crowbar', 'survival_sword']) {
-    const wp = WEAPONS[id];
-    const owned = p.weaponId === id;
+  for (const id of IDS[cat] || []) {
+    const d = gearDef(id);
+    const owned = ownsGear(p, id);
+    const equipped = p[gearSlot(id)] === id;
+    const c = FORGE_CRAFTS[id];
+    const where = c ? `forge: ${costText(c.cost, RES_ICON)}` : 'found in hard places only';
+    const stat = cat === 'armor' ? `DEF ${d.def}`
+      : cat === 'weapons' ? `DMG${d.damage} Crit${Math.round(d.crit * 100)}% Stun${Math.round((d.stun || 0) * 100)}% Sta${d.stamina}${d.trait ? ` · ${d.trait}` : ''}${d.canOpen ? ' · opens locks' : ''}`
+        : d.desc;
     acts.push({
-      label: `${owned ? '✅' : '⚔️'} ${wp.name} <span class="sys">$${wp.price}</span><br><small>DMG${wp.damage} Crit${Math.round(wp.crit * 100)}% Sta${wp.stamina}${wp.canOpen ? ' · opens locks' : ''}</small>`,
-      disabled: owned || p.money < wp.price,
+      label: `${equipped ? '✅' : owned ? '🔧' : '🔒'} ${d.name} <span class="sys">${owned ? (equipped ? 'equipped' : 'owned — tap to equip') : where}</span><br><small>${stat}</small>`,
+      disabled: equipped || !owned,
       fn: () => {
-        p.money -= wp.price; p.weaponId = id; p.weaponDura = wp.durability;
-        // keep old bonus? reset to keep balance simple
-        log(`⚔️ Equipped <b>${wp.name}</b>. ${wp.desc}`, 'good');
+        if (!equipGear(p, id)) return;
+        log(`✅ Equipped <b>${d.name}</b>. ${d.desc || ''}`, 'good');
         advanceTime(p, 5); useSave && useSave(); showEquipCat(cat, true);
-      }
+      },
     });
   }
-  }
-  if (cat === 'tools') {
-  for (const id of ['pickaxe', 'fire_axe']) {
-    const t = TOOLS[id];
-    const owned = !!(p.tools && p.tools[id]);
-    const equipped = p.toolId === id;
-    acts.push({
-      label: `${equipped ? '✅' : owned ? '🔧' : t.icon} ${t.name} <span class="sys">${owned ? (equipped ? 'equipped' : 'owned — tap to equip') : '$' + t.price}</span><br><small>${t.desc}</small>`,
-      disabled: equipped || (!owned && p.money < t.price),
-      fn: () => {
-        if (!owned) {
-          if (p.money < t.price) return;
-          p.money -= t.price;
-          p.tools[id] = true;
-          log(`🛠️ Bought <b>${t.name}</b>. It rides on your belt.`, 'good');
-        } else {
-          log(`🔧 Equipped <b>${t.name}</b>.`, 'good');
-        }
-        p.toolId = id;
-        advanceTime(p, 5); useSave && useSave(); showEquipCat(cat, true);
-      }
-    });
-  }
-  }
-  if (cat === 'armor') {
-  for (const id of ['cloth_jacket', 'leather_jacket', 'police_vest']) {
-    const a = ARMORS[id];
-    const owned = p.armorId === id;
-    acts.push({
-      label: `${owned ? '✅' : '🦺'} ${a.name} <span class="sys">$${a.price}</span><br><small>DEF ${a.def}</small>`,
-      disabled: owned || p.money < a.price,
-      fn: () => { p.money -= a.price; p.armorId = id; log(`🦺 Equipped <b>${a.name}</b>.`, 'good'); advanceTime(p, 5); useSave && useSave(); showEquipCat(cat, true); }
-    });
-  }
-  }
-  if (cat === 'kit') {
-  for (const id of ['flashlight', 'backpack', 'gas_mask']) {
-    const a = ACCESSORIES[id];
-    const owned = p.accessoryId === id;
-    acts.push({
-      label: `${owned ? '✅' : '🎒'} ${a.name} <span class="sys">$${a.price}</span><br><small>${a.desc}</small>`,
-      disabled: owned || p.money < a.price,
-      fn: () => { p.money -= a.price; p.accessoryId = id; log(`🎒 Equipped <b>${a.name}</b>.`, 'good'); advanceTime(p, 5); useSave && useSave(); showEquipCat(cat, true); }
-    });
-  }
-  }
-  acts.push({ label: '⬅ Equipment', wide: true, fn: back });
+  acts.push({ label: '⬅ Equipment', wide: true, fn: () => showEquipment(true) });
   setActions(acts);
   updateHUD(); sync3D();
 }
@@ -752,15 +708,18 @@ function showInventory(back, quiet = false) {
   const grid = document.createElement('div');
   grid.className = 'inv-grid';
   for (const [id, qty] of entries) {
-    const it = ITEMS[id] || {};
+    const gd = gearDef(id);                      // gear can sit in the bag now
+    const it = ITEMS[id] || gd || {};
     const usable = it && ['heal', 'sanity', 'food', 'water'].includes(it.type);
+    const isGear = !!gd;
     const b = document.createElement('button');
-    b.className = 'inv-slot' + (usable ? ' usable' : '');
+    b.className = 'inv-slot' + (usable || isGear ? ' usable' : '');
     b.innerHTML = `<span class="slot-icon">${ITEM_ICON[id] || '📦'}</span><span class="slot-name">${it.name || id}</span><span class="slot-qty">×${qty}</span>`;
     b.title = (it.name || id) + (it.desc ? ' — ' + it.desc : '');
     b.onclick = () => {
       try {
         if (usable) useItem(id);
+        else if (isGear) equipFromBag(id);
         else log(`<span class="sys">${it.name || id}: ${it.desc || 'crafting material. Forge and NPCs want these.'}</span>`);
       } catch (e) { console.error(e); }
       updateHUD(); sync3D();
@@ -849,12 +808,17 @@ function travelTo(locId) {
   }
   showExplore(locId);
 }
+// spread the data entry so new flags (noStun, scream, …) reach combat for free —
+// the old hand-copied field list silently dropped any field added to ZOMBIES
+function mkZombie(id) {
+  const z = ZOMBIES[id] || ZOMBIES.walker;
+  const hp = z.hp + Math.floor(Math.random() * 8);
+  return { ...z, hp, max: hp };
+}
 function pickEnemies(loc, n) {
   const out = [];
   for (let i = 0; i < (n || 1); i++) {
-    const id = loc.enemies[Math.floor(Math.random() * loc.enemies.length)];
-    const z = ZOMBIES[id];
-    out.push({ id, name: z.name, hp: z.hp + Math.floor(Math.random() * 8), max: z.hp + 8, damage: z.damage, speed: z.speed, color: z.color, sanityHit: z.sanityHit });
+    out.push(mkZombie(loc.enemies[Math.floor(Math.random() * loc.enemies.length)]));
   }
   return out;
 }
@@ -990,7 +954,7 @@ function resolveEvent(loc, room, forced) {
     startCombat(enemies);
   } else if (type === 'loot') {
     const table = room.loot || 'general';
-    const items = rollLoot(table);
+    const items = rollLoot(table, room.dangerMod || 0);
     // food rooms always pay something edible on top
     if (table === 'food') items.push('canned_food');
     // home-ground advantage from chosen site
@@ -1181,9 +1145,7 @@ function rareEvent(loc) {
 }
 
 // ---------- WILDLIFE ----------
-function boarFoe() {
-  return { id: 'boar', name: 'Wild Boar', hp: 34, max: 38, damage: 10, speed: 4, color: 0x7a5a4a };
-}
+function boarFoe() { return mkZombie('boar'); }   // one source of truth for boar stats
 function giveItems(ids, loc, note) {
   // hunt rewards with backpack-full handling
   const p = P();
@@ -1346,7 +1308,9 @@ function returnToCamp(fled = false) {
   ZScene.spawnLoot(0);
   if (isNight(p) && !fled && Math.random() < 0.35) {
     log(`<br>🌙 <span class="bad">Night ambush on the road home!</span>`);
-    startCombat([{ id: 'runner', name: 'Runner', hp: 30, max: 34, damage: 12, speed: 5, color: 0x9f5f5f }], true);
+    // was a hand-built literal: duplicated the numbers, missed fleeMod/sanityHit,
+    // and shipped max:34 > hp:30 so the bar started part-drained
+    startCombat([mkZombie('runner')], true);
     return;
   }
   if (P().base) log(fled ? `<br>You stumble into camp at ${fmtTime(p)}.` : `<br>You make it back as ${fmtTime(p)} ticks over.`);
@@ -1367,7 +1331,7 @@ function updateBattleHUD() {
   hud.classList.toggle('hidden', !combat || !e);
   if (!combat || !e) return;
   const p = P();
-  $('foe-name').textContent = `🧟 Wild ${e.name}`;
+  $('foe-name').innerHTML = `🧟 Wild ${e.name}${e.resist > 0 ? ` <span style="color:#9ab">🛡️${Math.round(e.resist * 100)}%</span>` : ''}${e.bleed > 0 ? ` <span style="color:#e05656">🩸${e.bleed}</span>` : ''}`;
   const f = clamp(e.hp / e.max, 0, 1);
   const fh = $('foe-hp');
   fh.style.width = (f * 100) + '%';
@@ -1403,12 +1367,38 @@ function startCombat(enemies, roadside = false) {
   updateHUD(); sync3D();
   setTimeout(() => { if (combat && combat.enemies.length) combatTurn(); }, 950);
 }
-function combatTurn() {
+async function combatTurn() {
   const p = P();
   if (!combat) return;
   combat.busy = false;
   const e = combat.enemies[0];
   if (!e) return combatWin();
+  // Bleed ticks first, before you act — knives pay off across rounds, not on
+  // impact (§18). Stacks fade by one a round, so a bleed has to be re-opened.
+  const ticks = bleedTick(combat.enemies);
+  if (ticks.length) {
+    for (const t of ticks) { t.foe.hp -= t.dmg; t.foe.bleed = t.next; log(`🩸 <span class="bad">${t.foe.name} bleeds for ${t.dmg}.</span>`); }
+    dmgFloat(`-${ticks[0].dmg}`, 'foe', 'bleed');
+  }
+  if (combat.enemies[0].hp <= 0) { updateBattleHUD(); await foeFaint(combat.enemies[0]); return; }
+  // Screamer: one shriek per body. It doesn't hit hard — it makes your noise
+  // problem worse, and answers come if you were already loud.
+  if (e.scream && !e.screamed) {
+    e.screamed = true;
+    p.noise = clamp(p.noise + 25, 0, 100);
+    ZScene.addNoiseRing(p.noise);
+    ZScene.shake(0.4);
+    log(`📢 <span class="bad">The ${e.name} throws its head back and SCREAMS.</span> <span class="sys">Noise ${Math.round(p.noise)}.</span>`);
+    updateHUD();
+    if (p.noise >= 55) {
+      const pack = mkZombie(Math.random() < 0.5 ? 'walker' : 'rotten');
+      combat.enemies.push(pack);
+      ZScene.spawnZombies(combat.enemies);
+      ZScene.badge(`🧟 COMBAT — ${combat.enemies.length} HOSTILES`);
+      log(`<span class="bad">Something answers. A ${pack.name} shambles out of the dark.</span>`);
+      updateBattleHUD();
+    }
+  }
   const w = weaponOf(p);
   const tier = sanityTier(p.san);
   log(`<span class="sys">— Wild ${e.name} · ${w.name} (dura ${Math.round(p.weaponDura)})${tier !== 'stable' ? ` · 🧠${tier}` : ''}${p.hunger <= 0 ? ' · 🍖starving' : ''}${p.thirst <= 0 ? ' · 💧parched' : ''} — What will SURVIVOR do?</span>`);
@@ -1485,21 +1475,36 @@ async function doAttack(action) {
   await sleep(380);
   try {
     if (r.miss) {
-      log(`⚔️ ${aname} — <b>MISSED!</b>`);
-      dmgFloat('MISS', 'foe', 'miss');
+      log(`⚔️ ${aname} — <b>${r.dodged ? 'DODGED!' : 'MISSED!'}</b>${r.dodged ? ` <span class="sys">The ${e.name} slips the swing.</span>` : ''}`);
+      dmgFloat(r.dodged ? 'DODGED' : 'MISS', 'foe', 'miss');
     } else {
       e.hp -= r.dmg;
       ZScene.damageZombie(0, e.hp <= 0);
       ZScene.shake(r.crit ? 0.8 : 0.45);
       dmgFloat(r.crit ? `${r.dmg}!` : `${r.dmg}`, 'foe', r.crit ? 'crit' : '');
+      // trait riders — the payoff of §18 weapon personality
+      let rider = '';
+      if (r.bleed) { e.bleed = (e.bleed || 0) + r.bleed; rider += ` <span class="bad">🩸 Bleeding ×${e.bleed}</span>`; }
+      if (r.sunder) { e.resist = Math.max(0, (e.resist || 0) - r.sunder); rider += ` <span class="sys">🔧 plating pried — resist ${Math.round(e.resist * 100)}%</span>`; }
+      if (r.cleave && combat.enemies.length > 1) {
+        const e2 = combat.enemies[1]; e2.hp -= r.cleave;
+        rider += ` <span class="sys">↩ follow-through → ${e2.name} ${r.cleave}</span>`;
+      }
       updateBattleHUD();
-      const flinch = r.stunned ? ` <span class="good">Foe flinched!</span>` : '';
-      if (r.crit) log(`⚔️ ${aname} — <span class="gold">💥${r.dmg} CRIT!</span>${flinch}`);
-      else log(`⚔️ ${aname} — 💥${r.dmg}!${flinch}`);
+      const flinch = r.stunned ? ` <span class="good">Foe flinched!</span>`
+        : e.noStun ? ` <span class="sys">The ${e.name} shrugs it off.</span>` : '';
+      if (r.crit) log(`⚔️ ${aname} — <span class="gold">💥${r.dmg} CRIT!</span>${flinch}${rider}`);
+      else log(`⚔️ ${aname} — 💥${r.dmg}!${flinch}${rider}`);
       await sleep(520);
     }
     updateHUD(); sync3D(); updateBattleHUD();
     if (e.hp <= 0) { await foeFaint(e); return; }
+    // knockback: a heavy stun from a blunt weapon shoves the foe to the back
+    if (r.stunned && weaponOf(P()).trait === 'knockback' && combat.enemies.length > 1) {
+      const shoved = combat.enemies.shift(); combat.enemies.push(shoved);
+      log(`<span class="sys">${shoved.name} is knocked to the back of the pack.</span>`);
+      ZScene.spawnZombies(combat.enemies); updateBattleHUD();
+    }
     if (r.stunned) { combat.busy = false; return combatTurn(); } // free move
     await enemyStrike();
   } catch (err) {
