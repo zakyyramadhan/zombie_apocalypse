@@ -283,11 +283,11 @@ export const STRUCTURES = {
 };
 export const BUILD_ORDER = ['campfire','supply_stash','lean_to','workshop','trading_post','shrine','garden','rain_collector','storage_shed','palisade','watchtower'];
 
-// supply stash capacity tiers, upgraded at the Forge (workshop required)
+// supply stash capacity: distinct-type slots × max per stack, grown at the Forge
 export const STASH_LEVELS = [
-  { cap: 12, cost: null },                                  // dug-in cache, free with the structure
-  { cap: 24, cost: { scrap: 4, metal: 2 } },                // reinforced crate
-  { cap: 40, cost: { scrap: 6, metal: 4, money: 30 } },    // locked store-room
+  { slots: 10, per: 10, cost: null },                            // dug-in cache, free with the structure
+  { slots: 16, per: 10, cost: { scrap: 4, metal: 2 } },          // reinforced crate
+  { slots: 24, per: 10, cost: { scrap: 6, metal: 4, money: 30 } }, // locked store-room
 ];
 
 // Starting site choice: nowhere → scout → pick one. Each has a real passive.

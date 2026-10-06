@@ -2272,11 +2272,17 @@ skins when present — see §49.12.
 ## 49.12 Supply stash tiers (forge-upgraded, never unlimited)
 
 - 🗃️ Supply Stash structure {wood: 2} unlocks deposit/take at camp
-  (Put whole stacks, Take whole-or-what-fits; header shows `n/cap stored`).
-- Capacity tiers, raised at the **Forge** (workshop required): 12 (dug-in,
-  free) → 24 {scrap: 4, metal: 2} → 40 {scrap: 6, metal: 4, $30}.
-  Full stash refuses deposits and points at the Forge. Save data carries
-  `base.stash` + `base.stashLv` (defaulted on old saves, no version bump).
+  (Put whole stacks, Take whole-or-what-fits; header shows `n/total`
+  stored plus `types/slots` used).
+- Slot tiers, raised at the **Forge** (workshop required): 10 types ×10
+  (dug-in, free) → 16×10 {scrap: 4, metal: 2} → 24×10 {scrap: 6, metal: 4,
+  $30}. Full stack or full slots refuse deposits and point at the Forge.
+  Save data carries `base.stash` + `base.stashLv` (defaulted on old saves,
+  no version bump).
+- One shared pool: building, crafting, cooking, eating, healing, selling,
+  quests and dog-sharing all read pack + stash (`stockOf`) and deduct
+  pack-first (`takeStock`). Loot intake, drops, traps and raids stay
+  pack-only. Headers show pooled counts with a `(pack + stash)` note.
 
 # 50. Amendment — Survival, Not RPG (SUPERSEDES §32, §42 XP refs)
 

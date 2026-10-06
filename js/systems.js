@@ -320,18 +320,45 @@ export function fleeChance(p, zombies, bonus = 0) {
 export function newBase(siteId) {
   return { site: siteId, structures: [], foundedDay: null, stash: {}, stashLv: 1 };
 }
-export function stashCap(p) {
+export function stashTier(p) {
   const lv = Math.min(Math.max(p.base?.stashLv || 1, 1), STASH_LEVELS.length);
-  return STASH_LEVELS[lv - 1].cap;
+  return STASH_LEVELS[lv - 1];
+}
+export function stashCap(p) {
+  const t = stashTier(p);
+  return t.slots * t.per; // total headroom; per-stack and slot rules enforced on deposit
+}
+export function stashSlotsUsed(p) {
+  return Object.keys((p.base && p.base.stash) || {}).length;
 }
 export function hasStruct(p, id) { return !!(p.base && p.base.structures.includes(id)); }
 export function baseLevel(p) { return p.base ? p.base.structures.length : 0; }
+// unified stock: everything the survivor owns, pack + buried stash
+export function stockOf(p, id) {
+  return (p.inv[id] || 0) + (p.base?.stash?.[id] || 0);
+}
+// take from the shared pool, pack first (pockets stay light for runs)
+export function takeStock(p, id, qty = 1) {
+  id = canonId(id);
+  if (stockOf(p, id) < qty) return { took: 0, fromStash: 0 };
+  let need = qty, fromStash = 0;
+  const fromPack = Math.min(p.inv[id] || 0, need);
+  if (fromPack > 0) removeItem(p, id, fromPack);
+  need -= fromPack;
+  if (need > 0 && p.base?.stash) {
+    const s = Math.min(p.base.stash[id] || 0, need);
+    p.base.stash[id] -= s;
+    if (p.base.stash[id] <= 0) delete p.base.stash[id];
+    fromStash = s;
+  }
+  return { took: fromPack + fromStash, fromStash };
+}
 export function canAfford(p, cost) {
-  return Object.entries(cost).every(([id, qty]) => (p.inv[id] || 0) >= qty);
+  return Object.entries(cost).every(([id, qty]) => stockOf(p, id) >= qty);
 }
 export function payCost(p, cost) {
   if (!canAfford(p, cost)) return false;
-  for (const [id, qty] of Object.entries(cost)) removeItem(p, id, qty);
+  for (const [id, qty] of Object.entries(cost)) takeStock(p, id, qty);
   return true;
 }
 export function costText(cost, icons) {

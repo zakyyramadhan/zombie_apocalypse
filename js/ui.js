@@ -1,6 +1,6 @@
 // UI + game flow. Text is authoritative; Three.js is visualization.
 import { WEAPONS, TOOLS, ARMORS, ACCESSORIES, ITEMS, ITEM_ICON, ZOMBIES, LOCATIONS, LOOT_TABLES, FORGE_CRAFTS, FIELD_RECIPES, STASH_LEVELS, CHURCH_ACTIONS, NPCS, STRUCTURES, BUILD_ORDER, SITES, RES_ICON, ANIMALS, ANIMAL_POOL, SELL_PRICES } from './data.js';
-import { weaponOf, toolOf, tableIcons, invCount, invCap, stashCap, addItem, removeItem, normalizeInv, fmtTime, isNight, advanceTime, rollWeather, WEATHER_ICON, sanityTier, maybePanic, encounterRoll, rollLoot, stars, playerAttack, bleedTick, zombieAttack, fleeChance, merchantStock, survivalScore, sellPrice, marketMood, marketLabel, gearDef, gearSlot, ownsGear, grantGear, equipGear, clamp, hasStruct, baseLevel, canAfford, payCost, costText, newBase } from './systems.js';
+import { weaponOf, toolOf, tableIcons, invCount, invCap, stashCap, stashTier, stashSlotsUsed, stockOf, takeStock, addItem, removeItem, normalizeInv, fmtTime, isNight, advanceTime, rollWeather, WEATHER_ICON, sanityTier, maybePanic, encounterRoll, rollLoot, stars, playerAttack, bleedTick, zombieAttack, fleeChance, merchantStock, survivalScore, sellPrice, marketMood, marketLabel, gearDef, gearSlot, ownsGear, grantGear, equipGear, clamp, hasStruct, baseLevel, canAfford, payCost, costText, newBase } from './systems.js';
 import { ZScene } from './three-scene.js';
 
 let S = null;          // { player, weather, merchantDay, world }
@@ -143,14 +143,14 @@ function equipFromBag(id) {
 function useItem(id) {
   const p = P();
   const it = ITEMS[id];
-  if (!it || !(p.inv[id] > 0)) return;
-  removeItem(p, id, 1);
+  if (!it || stockOf(p, id) < 1) return;
+  const { fromStash } = takeStock(p, id, 1);
   if (it.hp) p.hp = clamp(p.hp + it.hp, 0, p.maxHp);
   if (it.sta) p.sta = clamp(p.sta + it.sta, 0, p.maxSta);
   if (it.san) p.san = clamp(p.san + it.san, 0, p.maxSan);
   if (it.hunger) p.hunger = clamp(p.hunger + it.hunger, 0, p.maxHunger);
   if (it.thirst) p.thirst = clamp(p.thirst + it.thirst, 0, p.maxThirst);
-  log(`Used <b>${it.name}</b>. ${it.desc}.`, 'good');
+  log(`Used <b>${it.name}</b>. ${it.desc}.${fromStash ? ' <span class="sys">(from stash)</span>' : ''}`, 'good');
   if (id === 'raw_meat' && Math.random() < 0.25) {
     p.hp = clamp(p.hp - 8, 1, p.maxHp);
     log(`<span class="bad">That meat was off. Stomach cramps (−8 HP). Cook it at a campfire next time.</span>`);
@@ -291,8 +291,8 @@ function showSettlement(first = false, silent = false) {
       ? { label: '🛢️ Collect water<br><small>+2 water</small>', fn: collectWater }
       : { label: '🛢️ Collector<br><small>empty today</small>', disabled: true, fn: () => {} });
   }
-  if (hasStruct(p, 'campfire') && (p.inv.raw_meat || 0) > 0) {
-    acts.push({ label: `🍖 Cook meat ×${p.inv.raw_meat}<br><small>raw → safe · 20m</small>`, fn: cookMeat });
+  if (hasStruct(p, 'campfire') && stockOf(p, 'raw_meat') > 0) {
+    acts.push({ label: `🍖 Cook meat ×${stockOf(p, 'raw_meat')}<br><small>raw → safe · 20m · pack + stash</small>`, fn: cookMeat });
   }
   acts.push(
     { label: '🎒 Inventory', fn: () => showInventory(showSettlement) },
@@ -307,7 +307,7 @@ function showSettlement(first = false, silent = false) {
 function showBuild(quiet = false) {
   screen = 'build';
   const p = P();
-  if (!quiet) log(`<br><span class="title">🔨 BUILD — Camp Lv ${baseLevel(p)}</span> <span class="sys">Wood 🪵${p.inv.wood || 0} · Stone 🪨${p.inv.stone || 0} · Scrap ⚙️${p.inv.scrap || 0} · Metal 🔩${p.inv.metal || 0} · Cloth 🧵${p.inv.cloth || 0}</span>`);
+  if (!quiet) log(`<br><span class="title">🔨 BUILD — Camp Lv ${baseLevel(p)}</span> <span class="sys">Wood 🪵${stockOf(p, 'wood')} · Stone 🪨${stockOf(p, 'stone')} · Scrap ⚙️${stockOf(p, 'scrap')} · Metal 🔩${stockOf(p, 'metal')} · Cloth 🧵${stockOf(p, 'cloth')}</span> <span class="sys">— pack + stash pooled</span>`);
   const acts = BUILD_ORDER.map(id => {
     const s = STRUCTURES[id];
     const built = hasStruct(p, id);
@@ -380,15 +380,16 @@ function collectWater() {
 }
 function cookMeat() {
   const p = P();
-  const n = p.inv.raw_meat || 0;
+  const n = stockOf(p, 'raw_meat'); // pack first, stash pile counts too
   if (!n) return showSettlement(false, true);
   advanceTime(p, 20);
-  const space = invCap(p) - invCount(p) + n; // freed raw slots count
+  const packRaw = p.inv.raw_meat || 0;
+  const space = invCap(p) - invCount(p) + packRaw; // freed pack slots count
   const move = Math.min(n, space);
-  removeItem(p, 'raw_meat', move);
-  addItem(p, 'cooked_meat', move);
-  log(`🍖 You cook ${move} meat over the fire. <b>+${move} Cooked Meat</b> — safe to eat.`, 'good');
-  if (move < n) log(`<span class="sys">No room — ${n - move} raw left uncooked.</span>`);
+  const { took, fromStash } = takeStock(p, 'raw_meat', move);
+  addItem(p, 'cooked_meat', took);
+  log(`🍖 You cook ${took} meat over the fire. <b>+${took} Cooked Meat</b> — safe to eat.${fromStash ? ' <span class="sys">(stash helped)</span>' : ''}`, 'good');
+  if (took < n) log(`<span class="sys">No room — ${n - took} raw left uncooked.</span>`);
   useSave && useSave();
   showSettlement(false, true);
 }
@@ -456,15 +457,16 @@ function showMerchant(mode = 'buy', quiet = false) {
       };
     }));
   } else {
-    const sellable = Object.entries(SELL_PRICES).filter(([id]) => (p.inv[id] || 0) > 0);
+    const sellable = Object.entries(SELL_PRICES).filter(([id]) => stockOf(p, id) > 0);
     if (!sellable.length) acts.push({ label: `<span class="sys">Nothing to sell — bring wood, scrap, hides, meat.</span>`, disabled: true, fn: () => {} });
     for (const [id] of sellable) {
-      const n = p.inv[id], price = sellPrice(id, p.day);
+      const n = stockOf(p, id), price = sellPrice(id, p.day);
       const sellN = (qty) => () => {
-        if (!removeItem(p, id, qty)) return;
-        p.money += price * qty;
-        advanceTime(p, 5 * qty); // time is the real cost of selling in bulk
-        log(`Sold ${qty}× ${itemName(id)} <span class="good">+$${price * qty}</span> <span class="sys">(${5 * qty}m)</span>.`);
+        const { took, fromStash } = takeStock(p, id, qty);
+        if (!took) return;
+        p.money += price * took;
+        advanceTime(p, 5 * took); // time is the real cost of selling in bulk
+        log(`Sold ${took}× ${itemName(id)} <span class="good">+$${price * took}</span> <span class="sys">(${5 * took}m)</span>${fromStash ? ' <span class="sys">(from stash)</span>' : ''}.`);
         useSave && useSave();
         showMerchant('sell', true);
       };
@@ -486,7 +488,7 @@ function showMerchant(mode = 'buy', quiet = false) {
 function showForge() {
   screen = 'forge';
   const p = P();
-  log(`<br><span class="title">⚒️ FORGE</span><br><span class="sys">Craft gear from what you haul home. There are <b>no weapon upgrades</b> — a blade is worn until it dies, then you forge another. The Forge tunes the <b>base</b> and the <b>stash</b> only.</span><br>Wood ${p.inv.wood || 0} · Scrap ${p.inv.scrap || 0} · Metal ${p.inv.metal || 0} · Cloth ${p.inv.cloth || 0} · Leather ${p.inv.leather || 0} · Battery ${p.inv.battery || 0}`);
+  log(`<br><span class="title">⚒️ FORGE</span><br><span class="sys">Craft gear from what you haul home. There are <b>no weapon upgrades</b> — a blade is worn until it dies, then you forge another. The Forge tunes the <b>base</b> and the <b>stash</b> only.</span><br>Wood ${stockOf(p, 'wood')} · Scrap ${stockOf(p, 'scrap')} · Metal ${stockOf(p, 'metal')} · Cloth ${stockOf(p, 'cloth')} · Leather ${stockOf(p, 'leather')} · Battery ${stockOf(p, 'battery')} <span class="sys">(pack + stash)</span>`);
   const acts = [];
   acts.push({ header: '🛠️ Forge Gear <span class="sys">— materials only, never money</span>' });
   for (const [id, c] of Object.entries(FORGE_CRAFTS)) {
@@ -535,20 +537,20 @@ function showForge() {
       const mat = Object.fromEntries(Object.entries(next.cost).filter(([k]) => k !== 'money'));
       const afford = canAfford(p, mat) && p.money >= (next.cost.money || 0);
       acts.push({
-        label: `🗃️ Enlarge Stash → ${next.cap}<br><small>${costText(mat, RES_ICON)}${next.cost.money ? ` · $${next.cost.money}` : ''} · 30m</small>`,
+        label: `🗃️ Enlarge Stash → ${next.slots} types ×${next.per}<br><small>${costText(mat, RES_ICON)}${next.cost.money ? ` · $${next.cost.money}` : ''} · 30m</small>`,
         disabled: !afford,
         fn: () => {
           if (!payCost(p, mat) || p.money < (next.cost.money || 0)) { log(`Not enough materials.`, 'bad'); return showForge(); }
           p.money -= (next.cost.money || 0);
           p.base.stashLv = lv + 1;
-          log(`🗃️ <b>Stash enlarged — ${next.cap} slots.</b> Bury it deep.`, 'good');
+          log(`🗃️ <b>Stash enlarged — ${next.slots} types ×${next.per}.</b> Bury it deep.`, 'good');
           advanceTime(p, 30);
           useSave && useSave();
           showForge();
         }
       });
     } else {
-      acts.push({ label: `🗃️ Stash maxed <span class="sys">${STASH_LEVELS[lv - 1].cap}</span>`, disabled: true, fn: () => {} });
+      acts.push({ label: `🗃️ Stash maxed <span class="sys">${STASH_LEVELS[lv - 1].slots}×${STASH_LEVELS[lv - 1].per}</span>`, disabled: true, fn: () => {} });
     }
   }
   acts.push({ label: '⬅ Back', wide: true, fn: showSettlement });
@@ -643,8 +645,9 @@ function showStash(back) {
   const pack = Object.entries(p.inv);
   const stored = Object.entries(p.base.stash);
   const cap = stashCap(p);
+  const tier = stashTier(p);
   const maxed = (p.base.stashLv || 1) >= STASH_LEVELS.length;
-  log(`<br><span class="title">🗃️ SUPPLY STASH</span> <span class="sys">— ${stashTotal(p)}/${cap} stored · pack ${invCount(p)}/${invCap(p)}${maxed ? '' : ' · bigger sizes at the Forge'}</span>`);
+  log(`<br><span class="title">🗃️ SUPPLY STASH</span> <span class="sys">— ${stashTotal(p)}/${cap} stored · ${stashSlotsUsed(p)}/${tier.slots} types · pack ${invCount(p)}/${invCap(p)}${maxed ? '' : ' · bigger sizes at the Forge'}</span>`);
   const box = $('actions');
   box.innerHTML = '';
   const mkRow = (id, qty, verb, fn) => {
@@ -668,11 +671,14 @@ function showStash(back) {
   if (pack.length) sectionHead('📥 From pack — tap to stash it');
   for (const [id, qty] of pack) {
     mkRow(id, qty, 'Put', () => {
-      const room = stashCap(p) - stashTotal(p);
+      const inStash = p.base.stash[id] || 0;
+      const per = stashTier(p).per, slots = stashTier(p).slots;
+      if (!inStash && stashSlotsUsed(p) >= slots) { log(`🗃️ No free slot (all ${slots} types taken). <b>Forge</b> a bigger one.`, 'bad'); return; }
+      const room = Math.min(stashCap(p) - stashTotal(p), per - inStash);
       const move = Math.min(qty, Math.max(0, room));
-      if (move <= 0) { log(`🗃️ Stash full (${stashCap(p)}). <b>Forge</b> a bigger one.`, 'bad'); return; }
+      if (move <= 0) { log(`🗃️ ${inStash ? `Stack full (${per} max)` : `Stash full (${stashCap(p)})`}. <b>Forge</b> a bigger one.`, 'bad'); return; }
       if (!removeItem(p, id, move)) return;
-      p.base.stash[id] = (p.base.stash[id] || 0) + move;
+      p.base.stash[id] = inStash + move;
       log(`Put <b>${ITEMS[id]?.name || id} ×${move}</b> in the stash${move < qty ? ' (rest stays in pack)' : ''}.`, 'good');
       useSave && useSave();
       showStash(back);
@@ -704,21 +710,23 @@ function showInventory(back, quiet = false) {
   if (back) invBack = back;
   const p = P();
   normalizeInv(p); // display-name keys can never linger here
-  const entries = Object.entries(p.inv);
-  if (!quiet) log(`<br><span class="title">🎒 BACKPACK ${invCount(p)}/${invCap(p)}</span> <span class="sys">— tap a supply to use it</span>`);
+  const ids = [...new Set([...Object.keys(p.inv), ...Object.keys(p.base?.stash || {})])];
+  const entries = ids.map((id) => [id, p.inv[id] || 0, (p.base?.stash || {})[id] || 0]).filter(([, q, s]) => q > 0 || s > 0);
+  if (!quiet) log(`<br><span class="title">🎒 BACKPACK ${invCount(p)}/${invCap(p)}</span> <span class="sys">— tap a supply to use it (stash counts too)</span>`);
   const box = $('actions');
   box.innerHTML = '';
   const grid = document.createElement('div');
   grid.className = 'inv-grid';
-  for (const [id, qty] of entries) {
+  for (const [id, qty, sqty] of entries) {
     const gd = gearDef(id);                      // gear can sit in the bag now
     const it = ITEMS[id] || gd || {};
     const usable = it && ['heal', 'sanity', 'food', 'water'].includes(it.type);
     const isGear = !!gd;
+    if (!qty && !(usable && sqty > 0)) continue; // stash-only gear stays buried
     const locked = !!(p.locked || {})[id];
     const b = document.createElement('button');
     b.className = 'inv-slot' + (usable || isGear ? ' usable' : '');
-    b.innerHTML = `<span class="slot-drop${locked ? ' locked' : ''}" title="${locked ? 'Locked' : 'Discard'}">${locked ? '🔒' : '🗑'}</span><span class="slot-icon">${ITEM_ICON[id] || '📦'}</span><span class="slot-name">${it.name || id}</span><span class="slot-qty">×${qty}</span>`;
+    b.innerHTML = `${qty ? `<span class="slot-drop${locked ? ' locked' : ''}" title="${locked ? 'Locked' : 'Discard'}">${locked ? '🔒' : '🗑'}</span>` : ''}<span class="slot-icon">${ITEM_ICON[id] || '📦'}</span><span class="slot-name">${it.name || id}</span><span class="slot-qty">×${qty}${sqty ? ` <span class="sys">+${sqty}🗃️</span>` : ''}</span>`;
     b.title = (it.name || id) + (it.desc ? ' — ' + it.desc : '');
     b.onclick = (ev) => {
       try {
@@ -1129,11 +1137,11 @@ function npcEvent(loc) {
   const npc = NPCS[Math.floor(Math.random() * NPCS.length)];
   log(`<br>🧍 <b>${npc.name}</b><br>"${npc.text}"`);
   const acts = [];
-  if (npc.quest && (p.inv[npc.quest.need] || 0) >= npc.quest.qty) {
+  if (npc.quest && stockOf(p, npc.quest.need) >= npc.quest.qty) {
     acts.push({
       label: `🤝 Hand over ${npc.quest.qty}× ${itemName(npc.quest.need)}`, primary: true,
       fn: () => {
-        removeItem(p, npc.quest.need, npc.quest.qty);
+        takeStock(p, npc.quest.need, npc.quest.qty);
         p.money += npc.quest.reward.money || 0; p.rep += 5;
         if (npc.quest.reward.san) p.san = clamp(p.san + npc.quest.reward.san, 0, p.maxSan);
         log(`<span class="good">Reward: $${npc.quest.reward.money || 0}, +5 rep.</span> They'll remember this.`, 'good');
@@ -1146,7 +1154,7 @@ function npcEvent(loc) {
   if (Math.random() < 0.5) {
     log(`A wounded survivor crawls from behind debris, clutching a backpack. <i>"Please… I can pay…"</i> Blood leaks from his leg.`);
     acts.push({ label: '❤️ Help (bandage → +rep, +sanity)', fn: () => {
-      if ((p.inv.bandage || 0) > 0) { removeItem(p, 'bandage', 1); p.rep += 8; p.san = clamp(p.san + 6, 0, p.maxSan); p.money += 15; log(`<span class="good">You bind his leg. He presses $15 and a whispered cache location into your hand. Rep +8.</span>`); addItem(p, 'scrap', 2) || 0; }
+      if (stockOf(p, 'bandage') > 0) { takeStock(p, 'bandage', 1); p.rep += 8; p.san = clamp(p.san + 6, 0, p.maxSan); p.money += 15; log(`<span class="good">You bind his leg. He presses $15 and a whispered cache location into your hand. Rep +8.</span>`); addItem(p, 'scrap', 2) || 0; }
       else { p.san = clamp(p.san - 4, 0, p.maxSan); log(`You have no bandage. He nods like he expected this. <span class="san">🧠 −4.</span>`); }
       advanceTime(p, 25); afterRoom(loc);
     } });
@@ -1260,8 +1268,8 @@ function dogEvent(loc) {
   log(`<br>🐕 <b>Stray Dog</b><br>Ribs showing, tail low — but its eyes are sharp. It whines at your pack. It smells your food.`);
   setActions([
     { label: `🍖 Share food<br><small>1 canned · it may repay you</small>`, primary: true, fn: () => {
-      if (!(p.inv.canned_food > 0)) { p.san = clamp(p.san - 2, 0, p.maxSan); advanceTime(p, 5); log(`You have nothing to share. It whines and backs off. <span class="san">🧠 −2.</span>`); return afterRoom(loc); }
-      removeItem(p, 'canned_food', 1);
+      if (!(stockOf(p, 'canned_food') > 0)) { p.san = clamp(p.san - 2, 0, p.maxSan); advanceTime(p, 5); log(`You have nothing to share. It whines and backs off. <span class="san">🧠 −2.</span>`); return afterRoom(loc); }
+      takeStock(p, 'canned_food', 1);
       advanceTime(p, 20);
       p.san = clamp(p.san + 4, 0, p.maxSan); p.rep += 2;
       log(`It wolfs the food — then grabs your sleeve and drags you to a buried cache! <span class="san">🧠 +4, Rep +2.</span>`);
@@ -1458,9 +1466,9 @@ async function combatTurn() {
     { label: `💨 Dodge<br><small>10 sta · avoid</small>`, fn: () => doGuard('dodge') },
     { label: `🛡️ Block<br><small>6 sta · halve</small>`, fn: () => doGuard('block') },
     { label: `🏃 Flee<br><small>${Math.round(fleeChance(p, combat.enemies, fleeBonus()) * 100)}%</small>`, danger: true, fn: doFlee },
-    { label: `🩹 Bandage (${P().inv.bandage || 0})`, fn: () => {
+    { label: `🩹 Bandage (${stockOf(P(), 'bandage')})`, fn: () => {
       if (combat.busy) return;
-      if (!(P().inv.bandage > 0)) { log(`No bandages.`); return combatTurn(); }
+      if (!(stockOf(P(), 'bandage') > 0)) { log(`No bandages.`); return combatTurn(); }
       combat.busy = true; lockActions();
       useItemSilent('bandage');
       updateBattleHUD();
@@ -1473,29 +1481,33 @@ async function combatTurn() {
 function useItemSilent(id) {
   const p = P();
   const it = ITEMS[id];
-  if (!it || !(p.inv[id] > 0)) return false;
-  removeItem(p, id, 1);
+  if (!it || stockOf(p, id) < 1) return false;
+  const { fromStash } = takeStock(p, id, 1);
   if (it.hp) p.hp = clamp(p.hp + it.hp, 0, p.maxHp);
   if (it.sta) p.sta = clamp(p.sta + it.sta, 0, p.maxSta);
   if (it.san) p.san = clamp(p.san + it.san, 0, p.maxSan);
   if (it.hunger) p.hunger = clamp(p.hunger + it.hunger, 0, p.maxHunger);
   if (it.thirst) p.thirst = clamp(p.thirst + it.thirst, 0, p.maxThirst);
-  log(`Used <b>${it.name}</b>.`, 'good');
+  log(`Used <b>${it.name}</b>.${fromStash ? ' <span class="sys">(from stash)</span>' : ''}`, 'good');
   advanceTime(p, 5);
   return true;
 }
 function combatInventory() {
   if (combat.busy) return;
-  const usable = Object.entries(P().inv).filter(([id]) => ITEMS[id] && ['heal', 'sanity', 'food', 'water'].includes(ITEMS[id].type));
+  const ids = [...new Set([...Object.keys(P().inv), ...Object.keys(P().base?.stash || {})])];
+  const usable = ids.filter((id) => ITEMS[id] && ['heal', 'sanity', 'food', 'water'].includes(ITEMS[id].type));
   if (!usable.length) { log(`<span class="sys">Nothing usable.</span>`); return combatTurn(); }
   setActions([
-    ...usable.map(([id, qty]) => ({ label: `${ITEMS[id].name} ×${qty}<br><small>${ITEMS[id].desc}</small>`, fn: () => {
+    ...usable.map((id) => {
+      const q = P().inv[id] || 0, sq = (P().base?.stash || {})[id] || 0;
+      return { label: `${ITEMS[id].name} ×${q}${sq ? ` <span class="sys">+${sq}🗃️</span>` : ''}<br><small>${ITEMS[id].desc}</small>`, fn: () => {
       if (combat.busy) return;
       combat.busy = true; lockActions();
       useItemSilent(id);
       updateBattleHUD();
       enemyStrike();
-    } })),
+    } };
+    }),
     { label: '⬅ Back', wide: true, fn: () => combatTurn() },
   ]);
 }
