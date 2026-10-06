@@ -118,9 +118,11 @@ function die(cause) {
     log(`${cause || 'The dead claimed you.'}`);
     log(`Day: <b>${p.day}</b> · Zombies killed: <b>${p.kills}</b> · Explored: <b>${p.explored}</b> · Looted: <b>${p.looted}</b><br>Final weapon: <b>${weaponOf(p).name}</b><br><span class="gold">Survival Score: ${score.toLocaleString()}</span>`);
     if (meta.bestScore) log(`<span class="sys">Best score: ${meta.bestScore.toLocaleString()} · Runs: ${meta.runs} · Total kills: ${meta.totalKills}</span>`);
-    try { localStorage.removeItem('zombie_survival_save_v1'); } catch {}
+    // NOTE: the save is deliberately kept — death returns you to your last
+    // save point instead of wiping the run. New Run wipes explicitly.
     setActions([
-      { label: '🆕 New Run', primary: true, wide: true, fn: () => window.location.reload() },
+      { label: '📂 Load last save', primary: true, wide: true, fn: () => window.location.reload() },
+      { label: '🆕 New Run <span class="sys">— wipes save</span>', wide: true, fn: () => { import('./state.js').then(m => { m.wipeSave(); window.location.reload(); }); } },
     ]);
   });
   return true;
@@ -836,7 +838,7 @@ function travelTo(locId) {
   p.noise = clamp(p.noise + 5, 0, 100);
   S.weather = Math.random() < 0.3 ? rollWeather() : S.weather;
   p.locationId = locId; p.depth = 0;
-  p.searched = {}; p.deep = 0; // fresh visit: rooms refill, pushes reset
+  p.searched = {}; p.deep = 0; p.unlocked = {}; // fresh visit: rooms refill, pushes reset, locks re-lock
   S.world.depleted[locId] = (S.world.depleted[locId] || 0) + 1;
   S.world.cooldown[locId] = p.day; // no spamming the same area until tomorrow
   ZScene.buildLocation(locId); ZScene.badge(`${loc.icon} ${loc.name.toUpperCase()}`);
@@ -882,8 +884,9 @@ function showExplore(locId, quiet = false) {
         fn: () => enterRoom(loc.id, r.id)
       };
     }
+    const stillLocked = r.locked && !p.unlocked?.[r.id];
     return {
-      label: `${r.locked ? '🔒' : '🚪'} ${r.name}<br><small>may yield ${lootIcons(r.loot)}</small>`,
+      label: `${stillLocked ? '🔒' : '🚪'} ${r.name}<br><small>${r.locked && !stillLocked ? 'forced open · ' : ''}may yield ${lootIcons(r.loot)}</small>`,
       fn: () => enterRoom(loc.id, r.id)
     };
   });
@@ -915,19 +918,21 @@ function enterRoom(locId, roomId) {
     log(`<span class="san">For a second, the shadows form a face you know. Then it's just rubble. 🧠 −3</span>`, 'san');
     p.san = clamp(p.san - 3, 0, p.maxSan);
   }
-  if (room.locked && !(p.weaponId === 'crowbar' && WEAPONS.crowbar.canOpen) && !(p.inv.lockpick > 0)) {
+  if (room.locked && !p.unlocked?.[roomId] && !(p.weaponId === 'crowbar' && WEAPONS.crowbar.canOpen) && !(p.inv.lockpick > 0)) {
     log(`🔒 Locked. You need a <b>Lockpick</b> (merchant) or a <b>Crowbar</b>. Breaking it would be loud…`);
     setActions([
-      { label: '🔨 Break in (+30 noise, danger)', danger: true, fn: () => { p.noise = clamp(p.noise + 30, 0, 100); ZScene.addNoiseRing(70); log(`CRASH. The lock gives. <span class="bad">Every dead thing within blocks heard that.</span>`); resolveEvent(loc, { ...room, dangerMod: (room.dangerMod || 0) + 2 }, true); } },
+      { label: '🔨 Break in (+30 noise, danger)', danger: true, fn: () => { p.noise = clamp(p.noise + 30, 0, 100); ZScene.addNoiseRing(70); (p.unlocked ??= {})[roomId] = true; log(`CRASH. The lock gives. <span class="bad">Every dead thing within blocks heard that.</span>`); resolveEvent(loc, { ...room, dangerMod: (room.dangerMod || 0) + 2 }, true); } },
       { label: '⬅ Step back', fn: () => showExplore(locId) },
     ]);
     updateHUD(); sync3D();
     return;
   }
-  if (room.locked && p.inv.lockpick > 0 && p.weaponId !== 'crowbar') {
+  if (room.locked && !p.unlocked?.[roomId] && p.inv.lockpick > 0 && p.weaponId !== 'crowbar') {
     removeItem(p, 'lockpick', 1);
+    (p.unlocked ??= {})[roomId] = true;
     log(`<span class="sys">Lockpick turns silently. The door opens.</span>`);
-  } else if (room.locked) {
+  } else if (room.locked && !p.unlocked?.[roomId]) {
+    (p.unlocked ??= {})[roomId] = true;
     log(`<span class="sys">Your crowbar finds the weak point. Quiet-ish.</span>`);
     p.noise = clamp(p.noise + 8, 0, 100);
   }

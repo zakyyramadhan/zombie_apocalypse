@@ -1431,6 +1431,13 @@ Known Recipes
 Lore
 ```
 
+Death rule (implemented): dying NEVER deletes the save. The death screen
+offers 📂 Load last save (reloading boots straight back into it) and
+🆕 New Run (which explicitly wipes first). Roguelite meta (best score,
+runs, total kills) is recorded on every death regardless. Loading after
+death resumes at the last autosave — which may be mid-danger, and that
+is intended: the price of dying is replaying the fatal stretch.
+
 ---
 
 # 35. Save System
@@ -2173,6 +2180,10 @@ skins when present — see §49.12.
 - A room fully resolved (searched, survived, or cleared of zombies) is marked
   ✓ picked clean for the rest of the visit. Cleared rooms can't be re-entered.
 - Fleeing does NOT consume the room — you left before resolving it.
+- Broken locks stay broken: once forced, picked, or crowbarred, a locked
+  room shows 🚪 forced open and never asks for another lockpick that visit.
+  (Peeking via Step back doesn't count — the door is still shut.) Locks
+  re-lock on the next visit.
 - When every room is dry, the only way forward is 🕳️ Push deeper:
   repeatable, but each push raises encounter danger (+depth). Risk replaces
   repetition. Leaving and returning starts a fresh visit (§31).
@@ -2246,6 +2257,11 @@ skins when present — see §49.12.
   items per search, ≈3 with the matching belt tool equipped. No flat theme
   bonus on top — the roll plus tool/site bonuses are the whole yield.
   Food rooms keep their +1 canned guarantee.
+- The mixed `general` table lives only where junk is believable (houses,
+  ranger cabin, storage room, car trunk, dog caches). Industrial rooms roll
+  `craft` only — quarry office, factory vault/dock, and garage (whose own
+  text promises metal, so the table finally matches). Supermarket cashier
+  rolls `food` (checkout snacks).
 - Palisade {16 wood, 6 stone}, Watchtower {14 wood, 8 stone}. Shop gear
   ~35% cheaper across weapons/armor/accessories.
 - Gathering: see §49.11 (nodes + charges; nowhere trickle stays 1 wood).

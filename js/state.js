@@ -56,6 +56,7 @@ export function loadGame() {
     if (!data.player || typeof data.player.hp !== 'number') return null;
     data.player.searched ??= {};
     data.player.deep ??= 0;
+    data.player.unlocked ??= {};
     data.player.gatherLeft ??= 3;
     data.player.gatherDay ??= 0;
     data.player.gardenCrop ??= null;

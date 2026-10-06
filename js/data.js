@@ -98,7 +98,7 @@ export const LOCATIONS = {
     rooms:[
       { id:'house1', name:'Blue House', loot:'general', dangerMod:0, text:'Family photos on the wall. The kitchen was searched in a hurry.' },
       { id:'house2', name:'Burned House', loot:'general', dangerMod:1, text:'Charred walls. The smell of smoke still lingers.' },
-      { id:'garage', name:'Garage (locked)', loot:'general', dangerMod:1, locked:true, text:'Tools behind a padlocked shutter. Metal clinks inside.' },
+      { id:'garage', name:'Garage (locked)', loot:'craft', dangerMod:1, locked:true, text:'Tools behind a padlocked shutter. Metal clinks inside.' },
       { id:'garden', name:'Overgrown Garden', loot:'food', dangerMod:0, text:'Vegetable patches gone wild. Quiet… too quiet.' },
     ]
   },

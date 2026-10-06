@@ -29,6 +29,7 @@ export function newPlayer() {
     base: null, siteFound: false, baseStorage: 0, thirstSaver: false,
     lastGardenDay: 0, lastWaterDay: 0,
     searched: {}, deep: 0, // per-visit room depletion + push-deeper count
+    unlocked: {}, // locks broken/picked this visit — stay open on re-entry
     gatherLeft: 3, gatherDay: 0, // nearby gathering charges, refilled daily
     gardenCrop: null, // { plantedDay } once seeds are in the ground
   };
