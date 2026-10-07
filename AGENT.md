@@ -1109,7 +1109,9 @@ At zero durability:
 Weapon broken.
 ```
 
-Weapons can be repaired at the Forge.
+Weapons and armor can be repaired at the Forge, paid in materials — steel for
+weapons, hide for armor. Wear travels with the survivor, not the item: switching
+gear never repairs it.
 
 ---
 

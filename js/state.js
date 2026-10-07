@@ -1,5 +1,5 @@
 // Versioned save in localStorage. Robust against corruption.
-import { SAVE_VERSION, WEAPONS } from './data.js';
+import { SAVE_VERSION, WEAPONS, ARMORS } from './data.js';
 import { newPlayer, normalizeInv } from './systems.js';
 
 const KEY = 'zombie_survival_save_v1';
@@ -63,6 +63,7 @@ export function loadGame() {
     data.player.tools ??= {};
     data.player.toolId ??= 'none';
     data.player.owned ??= {}; // found/forged gear waits in the bag until equipped
+    data.player.armorDura ??= (ARMORS[data.player.armorId] || {}).durability || 0; // armor wears now (§26)
     data.player.locked ??= {}; // stacks protected from being dropped
     normalizeInv(data.player); // heal display-name keys, whatever their source
     if (data.player.base) {

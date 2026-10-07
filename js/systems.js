@@ -17,6 +17,7 @@ export function newPlayer() {
     money: 50,
     weaponId: 'kitchen_knife',
     weaponDura: WEAPONS.kitchen_knife.durability,
+    armorDura: 0, // torn clothes take no wear; the plating's own durability drives it
     tools: {}, toolId: 'none', // owned tools + equipped tool (gather bonus, never fights)
     owned: {},                // gear you actually own (found or forged), separate from what's equipped
     locked: {},               // stacks the survivor refuses to drop by accident
@@ -111,9 +112,37 @@ export function equipGear(p, id) {
   const slot = gearSlot(id);
   if (!slot || !ownsGear(p, id)) return false;
   p[slot] = id;
-  // wear travels with the survivor, not the weapon: switching never repairs
-  if (WEAPONS[id]) p.weaponDura = Math.min(Math.max(p.weaponDura, 1), WEAPONS[id].durability);
+  // Wear travels with the survivor, not the item: switching never repairs.
+  // Only weapons and armor carry durability, so duraKey() picks the slot.
+  const k = duraKey(id);
+  if (k) p[k] = Math.min(Math.max(p[k] || 0, 1), gearDef(id).durability);
   return true;
+}
+
+// ---- repair: a Forge service (§26) ----
+// Durability lives on the worn slot (weaponDura / armorDura), not on the item,
+// so a repair refills that slot in place. Price is paid in the material the piece
+// is made of and grows with how much is missing.
+const REPAIR_MATS = { weaponDura: ['metal', 'scrap'], armorDura: ['leather', 'cloth'] };
+export function duraKey(id) {
+  if (WEAPONS[id]) return 'weaponDura';
+  if (ARMORS[id] && ARMORS[id].durability) return 'armorDura';
+  return null; // tools, kit, torn clothes — nothing to wear out
+}
+export function repairCost(id, missing) {
+  const k = duraKey(id);
+  if (!k || missing <= 0) return null;
+  const [a, b] = REPAIR_MATS[k];
+  return { [a]: Math.max(1, Math.ceil(missing / 20)), [b]: Math.max(1, Math.ceil(missing / 40)) };
+}
+export function repairGear(p, id) {
+  const k = duraKey(id);
+  const def = k ? gearDef(id) : null;
+  const missing = def ? Math.round(def.durability - (p[k] || 0)) : 0;
+  const cost = repairCost(id, missing);
+  if (!cost || !payCost(p, cost)) return null;
+  p[k] = def.durability;
+  return { cost, restored: missing };
 }
 
 // ---- time ----
@@ -292,7 +321,13 @@ export function bleedTick(enemies) {
 
 export function zombieAttack(p, zombie, playerGuard) {
   // playerGuard: 'dodge' | 'block' | null
-  const armorDef = ARMORS[p.armorId]?.def ?? 0; // one source of truth: data.js
+  const armor = ARMORS[p.armorId] || ARMORS.none; // one source of truth: data.js
+  let def = armor.def || 0;
+  if (armor.durability) { // worn plating protects less (§26)
+    const d = p.armorDura || 0;
+    if (d <= 0) def *= 0.5;
+    else if (d < armor.durability * 0.25) def *= 0.8;
+  }
   let dmg = zombie.damage * (0.85 + Math.random() * 0.3);
   if (p.hunger < 25) dmg *= 1.1;
   if (playerGuard === 'dodge') {
@@ -305,7 +340,8 @@ export function zombieAttack(p, zombie, playerGuard) {
     if (p.sta >= cost) p.sta -= cost;
     dmg *= 0.5;
   }
-  dmg = Math.max(1, Math.round(dmg - armorDef * 0.6));
+  if (armor.durability) p.armorDura = Math.max(0, (p.armorDura || 0) - 1); // the hit it just soaked
+  dmg = Math.max(1, Math.round(dmg - def * 0.6));
   p.hp = clamp(p.hp - dmg, 0, p.maxHp);
   if (zombie.sanityHit) p.san = clamp(p.san - 2, 0, p.maxSan);
   return { dmg };

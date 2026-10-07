@@ -1,6 +1,6 @@
 // UI + game flow. Text is authoritative; Three.js is visualization.
 import { WEAPONS, TOOLS, ARMORS, ACCESSORIES, ITEMS, ITEM_ICON, ZOMBIES, LOCATIONS, LOOT_TABLES, FORGE_CRAFTS, FIELD_RECIPES, STASH_LEVELS, CHURCH_ACTIONS, NPCS, STRUCTURES, BUILD_ORDER, SITES, RES_ICON, ANIMALS, ANIMAL_POOL, SELL_PRICES } from './data.js';
-import { weaponOf, toolOf, tableIcons, invCount, invCap, stashCap, stashTier, stashSlotsUsed, stockOf, takeStock, addItem, removeItem, normalizeInv, fmtTime, isNight, advanceTime, rollWeather, WEATHER_ICON, sanityTier, maybePanic, encounterRoll, rollLoot, stars, playerAttack, bleedTick, zombieAttack, fleeChance, merchantStock, survivalScore, sellPrice, marketMood, marketLabel, gearDef, gearSlot, ownsGear, grantGear, equipGear, clamp, hasStruct, baseLevel, canAfford, payCost, costText, newBase } from './systems.js';
+import { weaponOf, toolOf, tableIcons, invCount, invCap, stashCap, stashTier, stashSlotsUsed, stockOf, takeStock, addItem, removeItem, normalizeInv, fmtTime, isNight, advanceTime, rollWeather, WEATHER_ICON, sanityTier, maybePanic, encounterRoll, rollLoot, stars, playerAttack, bleedTick, zombieAttack, fleeChance, merchantStock, survivalScore, sellPrice, marketMood, marketLabel, gearDef, gearSlot, ownsGear, grantGear, equipGear, repairCost, repairGear, clamp, hasStruct, baseLevel, canAfford, payCost, costText, newBase } from './systems.js';
 import { ZScene } from './three-scene.js';
 
 let S = null;          // { player, weather, merchantDay, world }
@@ -268,7 +268,7 @@ function showSettlement(first = false, silent = false) {
     { label: '🗺️ Explore', primary: true, fn: showMap },
     { label: `🔨 Build <span class="sys">Lv ${baseLevel(p)}</span>`, primary: !hasStruct(p, 'campfire'), fn: () => showBuild() },
     hasStruct(p, 'trading_post') ? { label: '🏪 Merchant', fn: showMerchant } : locked('trading_post', 'Merchant'),
-    hasStruct(p, 'workshop') ? { label: '⚒️ Forge', fn: showForge } : locked('workshop', 'Forge'),
+    hasStruct(p, 'workshop') ? { label: '⚒️ Forge', fn: () => showForge() } : locked('workshop', 'Forge'),
     hasStruct(p, 'shrine') ? { label: '⛪ Church', fn: showChurch } : locked('shrine', 'Church'),
     { label: '🛡️ Equipment', fn: showEquipment },
   ];
@@ -487,75 +487,148 @@ function showMerchant(mode = 'buy', quiet = false) {
 }
 
 // ---------- FORGE ----------
-function showForge() {
+// One entry screen, one sub-screen per job. The old single list stacked every
+// recipe + dressing + storage row into one column and ran off the bottom of the
+// screen; splitting by category keeps each screen short enough to read.
+function costStock(p) {
+  return `Wood ${stockOf(p, 'wood')} · Scrap ${stockOf(p, 'scrap')} · Metal ${stockOf(p, 'metal')} · Cloth ${stockOf(p, 'cloth')} · Leather ${stockOf(p, 'leather')} · Battery ${stockOf(p, 'battery')} <span class="sys">(pack + stash)</span>`;
+}
+// kit = belt tools + worn accessories; the two other buckets are the worn slots
+function forgeCat(id) { return WEAPONS[id] ? 'weapons' : ARMORS[id] ? 'armor' : 'kit'; }
+function wornText(p) {
+  const w = weaponOf(p), a = ARMORS[p.armorId] || ARMORS.none;
+  const parts = [];
+  if (w.durability) parts.push(`🗡️ ${Math.round(p.weaponDura || 0)}/${w.durability}`);
+  if (a.durability) parts.push(`🦺 ${Math.round(p.armorDura || 0)}/${a.durability}`);
+  return parts.join(' · ') || 'nothing worn to fix';
+}
+function showForge(quiet = false) {
   screen = 'forge';
   const p = P();
-  log(`<br><span class="title">⚒️ FORGE</span><br><span class="sys">Craft gear from what you haul home. There are <b>no weapon upgrades</b> — a blade is worn until it dies, then you forge another. The Forge tunes the <b>base</b> and the <b>stash</b> only.</span><br>Wood ${stockOf(p, 'wood')} · Scrap ${stockOf(p, 'scrap')} · Metal ${stockOf(p, 'metal')} · Cloth ${stockOf(p, 'cloth')} · Leather ${stockOf(p, 'leather')} · Battery ${stockOf(p, 'battery')} <span class="sys">(pack + stash)</span>`);
+  if (!quiet) log(`<br><span class="title">⚒️ FORGE</span><br><span class="sys">Craft gear from what you haul home, and repair what the dead chewed up. No money changes hands here — materials only.</span><br>${costStock(p)}`);
+  const count = (cat) => Object.keys(FORGE_CRAFTS).filter(id => forgeCat(id) === cat).length;
+  const acts = [
+    { label: `⚔️ Weapons <span class="sys">${count('weapons')} recipes</span>`, fn: () => showForgeCat('weapons') },
+    { label: `🦺 Armor <span class="sys">${count('armor')} recipes</span>`, fn: () => showForgeCat('armor') },
+    { label: `🔧 Tools & Kit <span class="sys">${count('kit')} recipes</span>`, fn: () => showForgeCat('kit') },
+    { label: `🛠️ Repair <span class="sys">${wornText(p)}</span>`, fn: () => showForgeRepair() },
+    { label: '🩹 Field Dressing <span class="sys">cloth into care</span>', fn: () => showForgeDressing() },
+  ];
+  if (hasStruct(p, 'supply_stash')) acts.push({ label: `🗃️ Storage <span class="sys">stash ${stashTotal(p)}/${stashCap(p)}</span>`, fn: () => showForgeStorage() });
+  acts.push({ label: '⬅ Back', wide: true, fn: showSettlement });
+  setActions(acts);
+}
+function showForgeCat(cat, quiet = false) {
+  screen = 'forge';
+  const p = P();
+  const titles = { weapons: '⚔️ FORGE — WEAPONS', armor: '🦺 FORGE — ARMOR', kit: '🔧 FORGE — TOOLS & KIT' };
+  if (!quiet) log(`<br><span class="title">${titles[cat] || '⚒️ FORGE'}</span><br><span class="sys">Forged gear lands in your pack — wear it from Equipment.</span><br>${costStock(p)}`);
   const acts = [];
-  acts.push({ header: '🛠️ Forge Gear <span class="sys">— materials only, never money</span>' });
   for (const [id, c] of Object.entries(FORGE_CRAFTS)) {
+    if (forgeCat(id) !== cat) continue;
     const d = gearDef(id);
     const owned = ownsGear(p, id);
-    const equipped = p[gearSlot(id)] === id;
     acts.push({
-      label: `${equipped ? '✅' : owned ? '🔧 owned' : '🛠️'} Forge ${d.name} <span class="sys">${owned ? 'see Equipment to wear it' : costText(c.cost, RES_ICON)}</span><br><small>${c.desc} · 40m</small>`,
+      label: `${owned ? '🔧 owned' : '🛠️'} Forge ${d.name} <span class="sys">${owned ? 'see Equipment to wear it' : `${costText(c.cost, RES_ICON)} · 40m`}</span><br><small>${c.desc}</small>`,
       disabled: owned || !canAfford(p, c.cost),
       fn: () => {
-        if (!payCost(p, c.cost)) { log(`Not enough materials.`, 'bad'); return showForge(); }
+        if (!payCost(p, c.cost)) { log(`Not enough materials.`, 'bad'); return showForgeCat(cat, true); }
         grantGear(p, id);
         equipGear(p, id);
         log(`🛠️ Forged <b>${d.name}</b> from scrap and sweat. It's yours.`, 'good');
         advanceTime(p, 40);
         useSave && useSave();
-        showForge();
+        showForgeCat(cat, true);
       }
     });
   }
-  // field dressings: consumable recipes from FIELD_RECIPES (workshop required)
-  acts.push({ header: '🩹 Field Dressing <span class="sys">— cloth into care</span>' });
+  acts.push({ label: '⬅ Forge', wide: true, fn: () => showForge(true) });
+  setActions(acts);
+}
+// Repair only ever touches what you are wearing: durability lives on the worn
+// slot, so a piece in the pack has no wear of its own to fix.
+function showForgeRepair(quiet = false) {
+  screen = 'forge';
+  const p = P();
+  const items = [];
+  const w = weaponOf(p);
+  if (w.durability) items.push({ id: p.weaponId, d: w, key: 'weaponDura' });
+  const a = ARMORS[p.armorId] || ARMORS.none;
+  if (a.durability) items.push({ id: p.armorId, d: a, key: 'armorDura' });
+  if (!quiet) log(`<br><span class="title">🛠️ FORGE — REPAIR</span><br><span class="sys">Steel for weapons, hide for armor. A worn piece still fights — at reduced strength — until you fix it.</span><br>${costStock(p)}`);
+  const acts = [];
+  for (const { id, d, key } of items) {
+    const cur = Math.round(p[key] || 0), max = d.durability, missing = max - cur;
+    const cost = repairCost(id, missing);
+    acts.push({
+      label: `🔧 ${d.name} <span class="sys">${cur}/${max}${missing > 0 ? ` — ${costText(cost, RES_ICON)} · 20m` : ' — like new'}</span>`,
+      disabled: missing <= 0 || !canAfford(p, cost),
+      fn: () => {
+        const r = repairGear(p, id);
+        if (!r) { log(`Not enough materials.`, 'bad'); return showForgeRepair(true); }
+        log(`🔧 <b>${d.name}</b> repaired to full (+${r.restored}).`, 'good');
+        advanceTime(p, 20);
+        useSave && useSave();
+        showForgeRepair(true);
+      }
+    });
+  }
+  if (!items.length) log(`<span class="sys">Nothing you are wearing takes repair — torn clothes never wear out.</span>`);
+  acts.push({ label: '⬅ Forge', wide: true, fn: () => showForge(true) });
+  setActions(acts);
+}
+function showForgeDressing(quiet = false) {
+  screen = 'forge';
+  const p = P();
+  if (!quiet) log(`<br><span class="title">🩹 FORGE — FIELD DRESSING</span> <span class="sys">cloth into care</span><br>${costStock(p)}`);
+  const acts = [];
   for (const [id, r] of Object.entries(FIELD_RECIPES)) {
     const outName = ITEMS[r.out ? Object.keys(r.out)[0] : id]?.name || id;
     const outQty = r.out ? Object.values(r.out)[0] : 1;
-    const afford = canAfford(p, r.cost);
     acts.push({
       label: `🩹 Make ${outName} <span class="sys">${costText(r.cost, RES_ICON)}</span><br><small>${r.desc} · ${r.mins}m</small>`,
-      disabled: !afford,
+      disabled: !canAfford(p, r.cost),
       fn: () => {
-        if (!payCost(p, r.cost)) { log(`Not enough materials.`, 'bad'); return showForge(); }
+        if (!payCost(p, r.cost)) { log(`Not enough materials.`, 'bad'); return showForgeDressing(true); }
         for (const [oid, oqty] of Object.entries(r.out || { [id]: 1 })) addItem(p, oid, oqty);
         log(`🩹 Made <b>${outName} ×${outQty}</b>.`, 'good');
         advanceTime(p, r.mins || 15);
         useSave && useSave();
-        showForge();
+        showForgeDressing(true);
       }
     });
   }
-  // stash capacity upgrades (needs the stash structure; forge needs workshop)
-  if (hasStruct(p, 'supply_stash')) {
-    acts.push({ header: `🗃️ Storage <span class="sys">— stash ${stashTotal(p)}/${stashCap(p)}</span>` });
-    const lv = p.base.stashLv || 1;
-    if (lv < STASH_LEVELS.length) {
-      const next = STASH_LEVELS[lv]; // lv is 1-based, array is 0-based
-      const mat = Object.fromEntries(Object.entries(next.cost).filter(([k]) => k !== 'money'));
-      const afford = canAfford(p, mat) && p.money >= (next.cost.money || 0);
-      acts.push({
-        label: `🗃️ Enlarge Stash → ${next.slots} types ×${next.per}<br><small>${costText(mat, RES_ICON)}${next.cost.money ? ` · $${next.cost.money}` : ''} · 30m</small>`,
-        disabled: !afford,
-        fn: () => {
-          if (!payCost(p, mat) || p.money < (next.cost.money || 0)) { log(`Not enough materials.`, 'bad'); return showForge(); }
-          p.money -= (next.cost.money || 0);
-          p.base.stashLv = lv + 1;
-          log(`🗃️ <b>Stash enlarged — ${next.slots} types ×${next.per}.</b> Bury it deep.`, 'good');
-          advanceTime(p, 30);
-          useSave && useSave();
-          showForge();
-        }
-      });
-    } else {
-      acts.push({ label: `🗃️ Stash maxed <span class="sys">${STASH_LEVELS[lv - 1].slots}×${STASH_LEVELS[lv - 1].per}</span>`, disabled: true, fn: () => {} });
-    }
+  acts.push({ label: '⬅ Forge', wide: true, fn: () => showForge(true) });
+  setActions(acts);
+}
+// stash capacity upgrades (needs the stash structure; the forge needs the workshop)
+function showForgeStorage(quiet = false) {
+  screen = 'forge';
+  const p = P();
+  const lv = p.base.stashLv || 1;
+  if (!quiet) log(`<br><span class="title">🗃️ FORGE — STORAGE</span> <span class="sys">stash ${stashTotal(p)}/${stashCap(p)}</span><br>${costStock(p)}`);
+  const acts = [];
+  if (lv < STASH_LEVELS.length) {
+    const next = STASH_LEVELS[lv]; // lv is 1-based, array is 0-based
+    const mat = Object.fromEntries(Object.entries(next.cost).filter(([k]) => k !== 'money'));
+    const afford = canAfford(p, mat) && p.money >= (next.cost.money || 0);
+    acts.push({
+      label: `🗃️ Enlarge Stash → ${next.slots} types ×${next.per}<br><small>${costText(mat, RES_ICON)}${next.cost.money ? ` · $${next.cost.money}` : ''} · 30m</small>`,
+      disabled: !afford,
+      fn: () => {
+        if (!payCost(p, mat) || p.money < (next.cost.money || 0)) { log(`Not enough materials.`, 'bad'); return showForgeStorage(true); }
+        p.money -= (next.cost.money || 0);
+        p.base.stashLv = lv + 1;
+        log(`🗃️ <b>Stash enlarged — ${next.slots} types ×${next.per}.</b> Bury it deep.`, 'good');
+        advanceTime(p, 30);
+        useSave && useSave();
+        showForgeStorage(true);
+      }
+    });
+  } else {
+    acts.push({ label: `🗃️ Stash maxed <span class="sys">${STASH_LEVELS[lv - 1].slots}×${STASH_LEVELS[lv - 1].per}</span>`, disabled: true, fn: () => {} });
   }
-  acts.push({ label: '⬅ Back', wide: true, fn: showSettlement });
+  acts.push({ label: '⬅ Forge', wide: true, fn: () => showForge(true) });
   setActions(acts);
 }
 
@@ -581,7 +654,7 @@ function showEquipment(quiet = false) {
   const w = weaponOf(p);
   const t0 = toolOf(p);
   p.tools ??= {}; p.toolId ??= 'none';
-  if (!quiet) log(`<br><span class="title">🛡️ EQUIPMENT</span><br>Weapon: <b>${w.name}</b> (DMG ${w.damage}) · Tool: <b>${t0.icon || ''} ${t0.name}</b>${t0.gather ? ` (+1 ${t0.gather})` : ''} · Armor: <b>${ARMORS[p.armorId].name}</b> (DEF ${ARMORS[p.armorId].def}) · Kit: <b>${(ACCESSORIES[p.accessoryId] || {}).name || '—'}</b><br>Money: <b>$${p.money}</b>`);
+  if (!quiet) log(`<br><span class="title">🛡️ EQUIPMENT</span><br>Weapon: <b>${w.name}</b> (DMG ${w.damage}) · Tool: <b>${t0.icon || ''} ${t0.name}</b>${t0.gather ? ` (+1 ${t0.gather})` : ''} · Armor: <b>${ARMORS[p.armorId].name}</b> (DEF ${ARMORS[p.armorId].def}${ARMORS[p.armorId].durability ? ` · 🦺 ${Math.round(p.armorDura || 0)}/${ARMORS[p.armorId].durability}` : ''}) · Kit: <b>${(ACCESSORIES[p.accessoryId] || {}).name || '—'}</b><br>Money: <b>$${p.money}</b>`);
   setActions([
     { label: '⚔️ Weapons<br><small>blades & blunts</small>', fn: () => showEquipCat('weapons') },
     { label: '🔧 Belt Tools<br><small>gather bonus</small>', fn: () => showEquipCat('tools') },
@@ -1069,7 +1142,7 @@ function afterRoom(loc) {
   const visits = S.world.depleted[loc.id] || 0;
   if (visits >= 3 && Math.random() < 0.25) return hordeEvent(loc);
   // "one more room?" tension prompt
-  log(`<span class="sys">— Depth ${p.depth} · ${fmtTime(p)}${isNight(p) ? ' · 🌙 NIGHT' : ''} · HP ${Math.round(p.hp)} · 🧠 ${Math.round(p.san)} · Dura ${Math.round(p.weaponDura)} —</span>`);
+  log(`<span class="sys">— Depth ${p.depth} · ${fmtTime(p)}${isNight(p) ? ' · 🌙 NIGHT' : ''} · HP ${Math.round(p.hp)} · 🧠 ${Math.round(p.san)} · Dura ${Math.round(p.weaponDura)}${ARMORS[p.armorId]?.durability ? ` · 🦺 ${Math.round(p.armorDura || 0)}` : ''} —</span>`);
   log(`<i>"I could search one more room… but my sanity is getting low. Durability is thin. If I stay, it might be night."</i>`);
   useSave && useSave();
   updateHUD(); sync3D();
@@ -1453,7 +1526,7 @@ async function combatTurn() {
   }
   const w = weaponOf(p);
   const tier = sanityTier(p.san);
-  log(`<span class="sys">— Wild ${e.name} · ${w.name} (dura ${Math.round(p.weaponDura)})${tier !== 'stable' ? ` · 🧠${tier}` : ''}${p.hunger <= 0 ? ' · 🍖starving' : ''}${p.thirst <= 0 ? ' · 💧parched' : ''} — What will SURVIVOR do?</span>`);
+  log(`<span class="sys">— Wild ${e.name} · ${w.name} (dura ${Math.round(p.weaponDura)}${ARMORS[p.armorId]?.durability ? ` · 🦺 ${Math.round(p.armorDura || 0)}` : ''})${tier !== 'stable' ? ` · 🧠${tier}` : ''}${p.hunger <= 0 ? ' · 🍖starving' : ''}${p.thirst <= 0 ? ' · 💧parched' : ''} — What will SURVIVOR do?</span>`);
   if (maybePanic(p)) {
     log(`<span class="san">😱 PANIC! Frozen — the enemy strikes first.</span>`);
     const r = zombieAttack(p, e, null);
@@ -1677,7 +1750,7 @@ export function showHelp() {
   · <b>Noise</b> attracts zombies. Heavy weapons & breaking doors are loud.<br>
   · <b>Sanity</b>: low = combat penalties, panic, hallucinations. Church + tea help.<br>
   · <b>Hunger/thirst</b> drain over time. Eat & drink.<br>
-  · <b>Durability</b>: repair at the Forge. Broken weapons deal half damage.<br>
+  · <b>Durability</b>: weapons and armor wear as you fight — repair both at the Forge. A broken piece fights at half strength.<br>
   · Wildlife: rabbits, deer, boars, dogs, rats, crows. Hunt for <b>raw meat</b> — cook it at a campfire, or risk it raw. Sell hides & surplus at the Merchant.<br>
   · Locked rooms need a <b>lockpick</b> or <b>crowbar</b>.<br>
   · Searched rooms go dry — then you can <b>push deeper</b> at rising danger.<br>

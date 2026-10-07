@@ -24,14 +24,17 @@ export const TOOLS = {
   pickaxe:  { id:'pickaxe', name:'Pickaxe', icon:'⛏️', gather:'stone', price:50, desc:'+1 Stone whenever you loot stone.' },
 };
 
+// Armor wears the way weapons do (§26): `durability` is how many hits the
+// plating soaks before its DEF decays. Repair is a Forge service — steel for a
+// weapon, hide for armor (systems.repairGear). `none` (torn clothes) never wears.
 export const ARMORS = {
   none:          { id:'none', name:'Torn Clothes', def:0, price:0, desc:'Barely protection.' },
-  cloth_jacket:  { id:'cloth_jacket', name:'Cloth Jacket', def:2, price:20, desc:'Light protection.' },
-  padded_coat:   { id:'padded_coat', name:'Padded Coat', def:3, price:30, desc:'Quilted layers. A little goes a long way.' },
-  leather_jacket:{ id:'leather_jacket', name:'Leather Jacket', def:5, price:55, desc:'Solid early armor.' },
-  police_vest:   { id:'police_vest', name:'Police Vest', def:8, price:110, desc:'Best early-game armor.' },
-  scrap_plate:   { id:'scrap_plate', name:'Scrap Plate', def:10, price:150, desc:'Car-door plates strapped over hide. Heavy, but it holds.' },
-  riot_armor:    { id:'riot_armor', name:'Riot Armor', def:14, price:220, desc:'Station salvage. The best a survivor can wear.' },
+  cloth_jacket:  { id:'cloth_jacket', name:'Cloth Jacket', def:2, price:20, durability:30, desc:'Light protection.' },
+  padded_coat:   { id:'padded_coat', name:'Padded Coat', def:3, price:30, durability:35, desc:'Quilted layers. A little goes a long way.' },
+  leather_jacket:{ id:'leather_jacket', name:'Leather Jacket', def:5, price:55, durability:45, desc:'Solid early armor.' },
+  police_vest:   { id:'police_vest', name:'Police Vest', def:8, price:110, durability:60, desc:'Best early-game armor.' },
+  scrap_plate:   { id:'scrap_plate', name:'Scrap Plate', def:10, price:150, durability:70, desc:'Car-door plates strapped over hide. Heavy, but it holds.' },
+  riot_armor:    { id:'riot_armor', name:'Riot Armor', def:14, price:220, durability:85, desc:'Station salvage. The best a survivor can wear.' },
 };
 
 export const ACCESSORIES = {
@@ -208,9 +211,10 @@ export const NPCS = [
   { id:'miller', name:'Miller — Ex-Cop', text:'"You fight like a civilian. Take this tip: aim for the head when it charges. Free lesson."', quest:null },
 ];
 
-// Weapon upgrades were removed by design: a weapon is found or forged, then
-// worn out and replaced. The Forge now only tunes the base (structures + stash).
-// Durability warns at 30% and damage halves at 0 — there is no repair.
+// Weapon upgrades were removed by design: a weapon is found or forged, never
+// improved. Wear IS fixable though — the Forge repairs weapons (steel) and armor
+// (hide) for hauled materials, and tunes the base/stash. Durability warns under
+// 25% and the piece fights at half strength at 0.
 
 // forge-craftable gear: no money, just hauled materials (workshop required).
 // Money only buys food/consumables now, so EVERY piece of gear needs a recipe
